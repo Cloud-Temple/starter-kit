@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r boilerplate/requirements.txt pytest
+          python -m pip install -r boilerplate/requirements.txt pytest pytest-asyncio
       - name: Run unit and ASGI integration tests
         run: |
           python -m pytest tests -q -m "not e2e"
@@ -36,7 +36,7 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r boilerplate/requirements.txt pytest
+          python -m pip install -r boilerplate/requirements.txt pytest pytest-asyncio
       - name: Start CI stack (WAF + MCP + MinIO)
         run: |
           docker compose -f boilerplate/docker-compose.ci.yml up -d --build
