@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from botocore.exceptions import ClientError
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "boilerplate" / "src"
@@ -72,6 +73,16 @@ def token_store_with_restore(real_s3_settings):
         resp = s3.get_object(Bucket=real_s3_settings.s3_bucket_name, Key=store.S3_KEY)
         original = resp["Body"].read()
         original_exists = True
+    except ClientError as exc:
+        # Some S3-compatible backends can return AccessDenied instead of NoSuchKey
+        # for a missing object when list/read metadata permissions are constrained.
+        # This bucket is dedicated to tests, so if the initial backup read is denied
+        # we continue from a known empty store. The test will still fail later if
+        # PUT/GET permissions are genuinely missing.
+        code = exc.response.get("Error", {}).get("Code", "")
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if code not in {"NoSuchKey", "AccessDenied"} and status != 404:
+            raise
     except Exception as exc:
         if "NoSuchKey" not in str(exc) and "404" not in str(exc):
             raise

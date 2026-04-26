@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r boilerplate/requirements.txt pytest
+          python -m pip install -r boilerplate/requirements.txt pytest pytest-asyncio
       - name: Run real S3 TokenStore tests
         env:
           RUN_REAL_S3: '1'
