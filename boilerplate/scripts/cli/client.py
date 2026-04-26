@@ -137,7 +137,7 @@ class MCPClient:
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    async def call_admin_api(self, method: str, path: str, json_body: dict | None = None) -> dict:
+    async def call_admin_api(self, method: str, path: str, json_body: Optional[dict] = None) -> dict:
         """Appel REST vers l'API admin (/admin/api/*) avec Bearer token.
 
         Stratégie hybride :
