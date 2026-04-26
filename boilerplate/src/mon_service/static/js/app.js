@@ -12,6 +12,38 @@
  */
 
 // =============================================================================
+// Branding
+// =============================================================================
+
+async function loadBranding() {
+    const brand = await apiGet('/brand');
+    if (!brand || brand.status === 'error') return;
+
+    const root = document.documentElement;
+    const colors = brand.colors || {};
+    if (colors.bg) root.style.setProperty('--bg', colors.bg);
+    if (colors.surface) root.style.setProperty('--surface', colors.surface);
+    if (colors.accent) root.style.setProperty('--accent', colors.accent);
+    if (colors.accent_hover) root.style.setProperty('--accent-hover', colors.accent_hover);
+
+    const title = `${brand.company_name || 'Cloud Temple'} — ${brand.app_title || 'Admin Console'}`;
+    document.title = title;
+
+    const loginLogo = document.getElementById('loginLogo');
+    const headerLogo = document.getElementById('headerLogo');
+    if (brand.logo) {
+        if (loginLogo) loginLogo.src = brand.logo;
+        if (headerLogo) headerLogo.src = brand.logo;
+    }
+    if (loginLogo) loginLogo.alt = brand.company_name || 'Brand logo';
+    if (headerLogo) headerLogo.alt = brand.company_name || 'Brand logo';
+
+    const headerTitle = document.getElementById('headerTitle');
+    if (headerTitle) headerTitle.textContent = brand.app_title || 'Admin Console';
+}
+
+
+// =============================================================================
 // Navigation
 // =============================================================================
 
@@ -168,6 +200,8 @@ document.getElementById('loginForm').addEventListener('submit', async e => {
 // =============================================================================
 
 (function init() {
+    loadBranding();
+
     // Pré-remplir le token depuis localStorage si disponible
     const saved = localStorage.getItem('mcp_admin_token');
     if (saved) {
