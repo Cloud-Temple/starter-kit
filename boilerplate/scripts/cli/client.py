@@ -137,6 +137,30 @@ class MCPClient:
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    async def call_admin_api(self, method: str, path: str, json_body: dict | None = None) -> dict:
+        """Appel REST vers l'API admin (/admin/api/*) avec Bearer token.
+
+        Stratégie hybride :
+          - MCP (/mcp) pour les outils métier
+          - REST (/admin/api) pour l'administration (tokens, policies, audit)
+        """
+        import httpx
+
+        url = f"{self.base_url}/admin/api{path}"
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as http:
+                resp = await http.request(method, url, headers=headers, json=json_body)
+                try:
+                    return resp.json()
+                except Exception:
+                    return {"status": "error", "message": resp.text, "status_code": resp.status_code}
+        except httpx.ConnectError:
+            return {"status": "error", "message": f"Serveur non accessible: {self.base_url}"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     async def list_tools(self) -> list:
         """Liste les outils MCP disponibles."""
         result = await self.call_tool("system_about", {})

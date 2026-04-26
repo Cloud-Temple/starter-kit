@@ -122,7 +122,7 @@ def whoami_cmd(ctx, output_json):
 
 @cli.group("token")
 def token_group():
-    """🔑 Gestion des tokens d'accès (admin)."""
+    """🔑 Gestion des tokens d'accès (admin via /admin/api)."""
     pass
 
 
@@ -131,19 +131,22 @@ def token_group():
 @click.option("--permissions", "-p", default="read,write", help="Permissions (ex: read,write,admin)")
 @click.option("--email", "-e", default="", help="Email du propriétaire (traçabilité)")
 @click.option("--expires", "-d", default=90, type=int, help="Expiration en jours (0 = jamais)")
+@click.option("--vaults", "-s", default="", help="Vaults/ressources autorisés (virgule, vide = aucune restriction explicite)")
 @click.option("--json", "-j", "output_json", is_flag=True, help="Sortie JSON brute")
 @click.pass_context
-def token_create_cmd(ctx, client_name, permissions, email, expires, output_json):
-    """Créer un nouveau token."""
+def token_create_cmd(ctx, client_name, permissions, email, expires, vaults, output_json):
+    """Créer un nouveau token via l'API admin REST."""
     async def _run():
         try:
             client = MCPClient(ctx.obj["url"], ctx.obj["token"])
-            result = await client.call_tool("token", {
-                "operation": "create",
+            perms = [p.strip() for p in permissions.split(",") if p.strip()]
+            vault_ids = [v.strip() for v in vaults.split(",") if v.strip()] if vaults else []
+            result = await client.call_admin_api("POST", "/tokens", {
                 "client_name": client_name,
-                "permissions": permissions,
+                "permissions": perms,
+                "allowed_resources": vault_ids,
                 "email": email,
-                "expires_days": expires,
+                "expires_in_days": expires,
             })
             if output_json:
                 show_json(result)
@@ -160,15 +163,43 @@ def token_create_cmd(ctx, client_name, permissions, email, expires, output_json)
 @click.option("--json", "-j", "output_json", is_flag=True, help="Sortie JSON brute")
 @click.pass_context
 def token_list_cmd(ctx, output_json):
-    """Lister les tokens existants."""
+    """Lister les tokens existants via l'API admin REST."""
     async def _run():
         try:
             client = MCPClient(ctx.obj["url"], ctx.obj["token"])
-            result = await client.call_tool("token", {"operation": "list"})
+            result = await client.call_admin_api("GET", "/tokens")
             if output_json:
                 show_json(result)
             elif result.get("status") == "ok":
                 show_token_list_result(result)
+            else:
+                show_error(result.get("message", "Erreur"))
+        except Exception as e:
+            show_error(f"Erreur: {e}")
+    asyncio.run(_run())
+
+
+@token_group.command("update")
+@click.argument("hash_prefix")
+@click.option("--permissions", "-p", default="", help="Nouvelles permissions (virgule)")
+@click.option("--vaults", "-s", default="", help="Vaults/ressources autorisés (virgule, vide = inchangé)")
+@click.option("--json", "-j", "output_json", is_flag=True, help="Sortie JSON brute")
+@click.pass_context
+def token_update_cmd(ctx, hash_prefix, permissions, vaults, output_json):
+    """Modifier un token (permissions, allowed_resources) via l'API admin REST."""
+    async def _run():
+        try:
+            client = MCPClient(ctx.obj["url"], ctx.obj["token"])
+            payload = {}
+            if permissions:
+                payload["permissions"] = [p.strip() for p in permissions.split(",") if p.strip()]
+            if vaults:
+                payload["allowed_resources"] = [v.strip() for v in vaults.split(",") if v.strip()]
+            result = await client.call_admin_api("PUT", f"/tokens/{hash_prefix}", payload)
+            if output_json:
+                show_json(result)
+            elif result.get("status") in ("ok", "updated"):
+                show_success(result.get("message", "Token mis à jour"))
             else:
                 show_error(result.get("message", "Erreur"))
         except Exception as e:
@@ -181,14 +212,11 @@ def token_list_cmd(ctx, output_json):
 @click.option("--json", "-j", "output_json", is_flag=True, help="Sortie JSON brute")
 @click.pass_context
 def token_revoke_cmd(ctx, hash_prefix, output_json):
-    """Révoquer un token par préfixe de hash."""
+    """Révoquer un token par préfixe de hash via l'API admin REST."""
     async def _run():
         try:
             client = MCPClient(ctx.obj["url"], ctx.obj["token"])
-            result = await client.call_tool("token", {
-                "operation": "revoke",
-                "client_name": hash_prefix,
-            })
+            result = await client.call_admin_api("DELETE", f"/tokens/{hash_prefix}")
             if output_json:
                 show_json(result)
             elif result.get("status") == "ok":
