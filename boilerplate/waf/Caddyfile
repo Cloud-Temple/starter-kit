@@ -133,6 +133,11 @@
 		coraza_waf {
 			load_owasp_crs
 			directives `
+				# Admin API uses REST verbs (PUT/DELETE) for token management.
+				# Define allowed methods BEFORE including CRS setup so rule 911100
+				# does not block legitimate /admin/api/* operations.
+				SecAction "id:900200,phase:1,pass,nolog,					setvar:'tx.allowed_methods=GET HEAD POST OPTIONS PUT DELETE'"
+
 				Include @coraza.conf-recommended
 				Include @crs-setup.conf.example
 				Include @owasp_crs/*.conf
