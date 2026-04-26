@@ -105,3 +105,34 @@ MinIO is used for default CI because it is reproducible and secretless.
 It does not replace real Cloud Temple / Dell ECS validation.
 
 Real S3 tests should run only in nightly/manual workflows using GitHub environment secrets (for example `nightly-real-s3`).
+
+## Nightly/manual real S3 workflow
+
+Workflow:
+
+```text
+.github/workflows/nightly-real-s3.yml
+```
+
+This workflow is intentionally not part of the default PR/push CI. It runs on:
+
+- `workflow_dispatch`
+- nightly schedule
+
+It requires the GitHub Actions environment:
+
+```text
+nightly-real-s3
+```
+
+Expected environment secrets:
+
+```text
+S3_ENDPOINT_URL
+S3_ACCESS_KEY_ID
+S3_SECRET_ACCESS_KEY
+S3_BUCKET_NAME
+S3_REGION_NAME
+```
+
+The credentials must point to the dedicated test bucket and must never be committed to git.
