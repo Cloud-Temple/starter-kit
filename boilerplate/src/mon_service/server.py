@@ -340,7 +340,7 @@ def main():
     print("\n" + _build_banner() + "\n", file=sys.stderr)
 
     # ⚠️ Avertissement si bootstrap key = valeur par défaut
-    if settings.admin_bootstrap_key == "changeme-in-production":
+    if settings.admin_bootstrap_key == "change_me_in_production":
         print(
             "⚠️  ATTENTION : ADMIN_BOOTSTRAP_KEY est la valeur par défaut !\n"
             "   → Changez-la dans .env AVANT tout déploiement en production.\n",
