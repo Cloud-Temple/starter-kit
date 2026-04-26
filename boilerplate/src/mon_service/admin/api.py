@@ -25,6 +25,7 @@ from pathlib import Path
 from ..config import get_settings
 from ..auth.token_store import get_token_store
 from ..auth.middleware import get_activity_log
+from ..branding import get_brand_profile
 
 # Limite de taille du body HTTP (anti-OOM)
 _MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB
@@ -34,6 +35,10 @@ async def handle_admin_api(scope, receive, send, mcp):
     """Routeur principal de l'API admin."""
     path = scope.get("path", "")
     method = scope.get("method", "GET")
+
+    # --- Public non-sensitive route: branding for login page ---
+    if path == "/admin/api/brand" and method == "GET":
+        return await _api_brand(send)
 
     # --- Auth admin requise ---
     token = _extract_admin_token(scope)
@@ -76,6 +81,12 @@ async def handle_admin_api(scope, receive, send, mcp):
 # =============================================================================
 # Endpoints
 # =============================================================================
+
+async def _api_brand(send):
+    """GET /admin/api/brand — Branding public de la console admin."""
+    settings = get_settings()
+    await _json_response(send, 200, {"status": "ok", **get_brand_profile(settings.mcp_brand)})
+
 
 async def _api_health(send, mcp):
     """GET /admin/api/health — État du serveur."""

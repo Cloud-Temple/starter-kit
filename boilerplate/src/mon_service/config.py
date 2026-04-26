@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     mcp_server_port: int = 8002
     mcp_server_debug: bool = False
 
+    # --- Branding admin UI ---
+    # Valeurs: ct (Cloud Temple), dgy (Dragonfly), isec (Intrinsec)
+    mcp_brand: str = "ct"
+
     # --- Auth ---
     admin_bootstrap_key: str = "change_me_in_production"
 
