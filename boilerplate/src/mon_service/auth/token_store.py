@@ -67,15 +67,29 @@ class TokenStore:
         self._s3_client = None
 
     def _get_s3(self):
-        """Lazy-load du client S3 boto3."""
+        """Lazy-load du client S3 boto3.
+
+        Cloud Temple / Dell ECS requires SigV2 for object data operations
+        (GET/PUT/DELETE), while many generic S3-compatible providers accept
+        SigV4. Keep the signature version configurable and default to the
+        Cloud Temple-compatible value.
+        """
         if self._s3_client is None:
             import boto3
+            from botocore.config import Config
+
+            config = Config(
+                region_name=self.settings.s3_region_name,
+                signature_version=getattr(self.settings, "s3_signature_version", "s3"),
+                s3={"addressing_style": getattr(self.settings, "s3_addressing_style", "path")},
+                retries={"max_attempts": 3, "mode": "adaptive"},
+            )
             self._s3_client = boto3.client(
                 "s3",
                 endpoint_url=self.settings.s3_endpoint_url,
                 aws_access_key_id=self.settings.s3_access_key_id,
                 aws_secret_access_key=self.settings.s3_secret_access_key,
-                region_name=self.settings.s3_region_name,
+                config=config,
             )
         return self._s3_client
 

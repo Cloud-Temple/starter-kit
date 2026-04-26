@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     s3_secret_access_key: str = ""
     s3_bucket_name: str = ""
     s3_region_name: str = "fr1"
+    # Cloud Temple / Dell ECS expects SigV2 for object data operations.
+    # Use "s3v4" for providers that require AWS Signature V4.
+    s3_signature_version: str = "s3"
+    s3_addressing_style: str = "path"
 
     # --- Vos services métier (exemples) ---
     # database_url: str = "postgresql://user:pass@db:5432/mydb"
