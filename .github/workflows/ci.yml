@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - fix/**
+      - test/**
+      - feat/**
+
+jobs:
+  unit-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r boilerplate/requirements.txt pytest pytest-asyncio
+      - name: Run unit and ASGI integration tests
+        run: |
+          python -m pytest tests -q -m "not e2e"
+
+  e2e-minio-compose:
+    runs-on: ubuntu-latest
+    needs: unit-integration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r boilerplate/requirements.txt pytest pytest-asyncio
+      - name: Start CI stack (WAF + MCP + MinIO)
+        run: |
+          docker compose -f boilerplate/docker-compose.ci.yml up -d --build
+      - name: Show stack status
+        run: |
+          docker compose -f boilerplate/docker-compose.ci.yml ps
+      - name: Run docker-compose e2e tests
+        env:
+          RUN_COMPOSE_E2E: '1'
+          E2E_BASE_URL: http://localhost:8082
+          E2E_ADMIN_BOOTSTRAP_KEY: test-ci-bootstrap-key
+        run: |
+          python -m pytest tests/e2e/test_minio_compose.py -q
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          docker compose -f boilerplate/docker-compose.ci.yml logs --no-color
+      - name: Stop CI stack
+        if: always()
+        run: |
+          docker compose -f boilerplate/docker-compose.ci.yml down -v
