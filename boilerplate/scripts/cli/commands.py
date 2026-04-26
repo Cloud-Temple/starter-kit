@@ -131,20 +131,20 @@ def token_group():
 @click.option("--permissions", "-p", default="read,write", help="Permissions (ex: read,write,admin)")
 @click.option("--email", "-e", default="", help="Email du propriétaire (traçabilité)")
 @click.option("--expires", "-d", default=90, type=int, help="Expiration en jours (0 = jamais)")
-@click.option("--vaults", "-s", default="", help="Vaults/ressources autorisés (virgule, vide = aucune restriction explicite)")
+@click.option("--resources", "--vaults", "-s", default="", help="Ressources/vaults autorisés (virgule, vide = aucune restriction explicite)")
 @click.option("--json", "-j", "output_json", is_flag=True, help="Sortie JSON brute")
 @click.pass_context
-def token_create_cmd(ctx, client_name, permissions, email, expires, vaults, output_json):
+def token_create_cmd(ctx, client_name, permissions, email, expires, resources, output_json):
     """Créer un nouveau token via l'API admin REST."""
     async def _run():
         try:
             client = MCPClient(ctx.obj["url"], ctx.obj["token"])
             perms = [p.strip() for p in permissions.split(",") if p.strip()]
-            vault_ids = [v.strip() for v in vaults.split(",") if v.strip()] if vaults else []
+            resource_ids = [v.strip() for v in resources.split(",") if v.strip()] if resources else []
             result = await client.call_admin_api("POST", "/tokens", {
                 "client_name": client_name,
                 "permissions": perms,
-                "allowed_resources": vault_ids,
+                "allowed_resources": resource_ids,
                 "email": email,
                 "expires_in_days": expires,
             })
@@ -182,10 +182,10 @@ def token_list_cmd(ctx, output_json):
 @token_group.command("update")
 @click.argument("hash_prefix")
 @click.option("--permissions", "-p", default="", help="Nouvelles permissions (virgule)")
-@click.option("--vaults", "-s", default="", help="Vaults/ressources autorisés (virgule, vide = inchangé)")
+@click.option("--resources", "--vaults", "-s", default="", help="Ressources/vaults autorisés (virgule, vide = inchangé)")
 @click.option("--json", "-j", "output_json", is_flag=True, help="Sortie JSON brute")
 @click.pass_context
-def token_update_cmd(ctx, hash_prefix, permissions, vaults, output_json):
+def token_update_cmd(ctx, hash_prefix, permissions, resources, output_json):
     """Modifier un token (permissions, allowed_resources) via l'API admin REST."""
     async def _run():
         try:
@@ -193,8 +193,8 @@ def token_update_cmd(ctx, hash_prefix, permissions, vaults, output_json):
             payload = {}
             if permissions:
                 payload["permissions"] = [p.strip() for p in permissions.split(",") if p.strip()]
-            if vaults:
-                payload["allowed_resources"] = [v.strip() for v in vaults.split(",") if v.strip()]
+            if resources:
+                payload["allowed_resources"] = [v.strip() for v in resources.split(",") if v.strip()]
             result = await client.call_admin_api("PUT", f"/tokens/{hash_prefix}", payload)
             if output_json:
                 show_json(result)

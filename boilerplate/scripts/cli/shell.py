@@ -31,7 +31,7 @@ SHELL_COMMANDS = {
     "health":  "Vérifier l'état de santé",
     "about":   "Informations sur le service",
     "whoami":  "Identité du token courant",
-    "token":   "Gestion tokens (create/list/update/revoke). Ex: token list, token create mon-agent --email a@b.com",
+    "token":   "Gestion tokens (create/list/update/revoke). Ex: token list, token create mon-agent --resources r1,r2",
     "quit":    "Quitter le shell",
     "exit":    "Quitter le shell",
     # Ajouter vos commandes métier ici :
@@ -105,16 +105,16 @@ async def cmd_token(client: MCPClient, state: dict, args: str = "",
             show_error(result.get("message", "Erreur"))
 
     elif sub == "create":
-        # Parser: token create NOM [--email EMAIL] [--permissions PERMS] [--expires DAYS] [--vaults v1,v2]
+        # Parser: token create NOM [--email EMAIL] [--permissions PERMS] [--expires DAYS] [--resources r1,r2] (alias: --vaults)
         create_parts = sub_args.split()
         if not create_parts:
-            show_warning("Usage: token create NOM [--email EMAIL] [--permissions read,write] [--expires 90] [--vaults v1,v2]")
+            show_warning("Usage: token create NOM [--email EMAIL] [--permissions read,write] [--expires 90] [--resources r1,r2]")
             return
         name = create_parts[0]
         email = ""
         permissions = "read,write"
         expires = 90
-        vaults = ""
+        resources = ""
         i = 1
         while i < len(create_parts):
             if create_parts[i] == "--email" and i + 1 < len(create_parts):
@@ -130,8 +130,8 @@ async def cmd_token(client: MCPClient, state: dict, args: str = "",
                     show_warning("--expires doit être un entier")
                     return
                 i += 2
-            elif create_parts[i] == "--vaults" and i + 1 < len(create_parts):
-                vaults = create_parts[i + 1]
+            elif create_parts[i] in ("--resources", "--vaults") and i + 1 < len(create_parts):
+                resources = create_parts[i + 1]
                 i += 2
             else:
                 i += 1
@@ -139,7 +139,7 @@ async def cmd_token(client: MCPClient, state: dict, args: str = "",
         result = await client.call_admin_api("POST", "/tokens", {
             "client_name": name,
             "permissions": [p.strip() for p in permissions.split(",") if p.strip()],
-            "allowed_resources": [v.strip() for v in vaults.split(",") if v.strip()] if vaults else [],
+            "allowed_resources": [v.strip() for v in resources.split(",") if v.strip()] if resources else [],
             "email": email,
             "expires_in_days": expires,
         })
@@ -151,14 +151,14 @@ async def cmd_token(client: MCPClient, state: dict, args: str = "",
             show_error(result.get("message", "Erreur"))
 
     elif sub == "update":
-        # Parser: token update HASH_PREFIX [--permissions read,write] [--vaults v1,v2]
+        # Parser: token update HASH_PREFIX [--permissions read,write] [--resources r1,r2] (alias: --vaults)
         update_parts = sub_args.split()
         if not update_parts:
-            show_warning("Usage: token update HASH_PREFIX [--permissions read,write] [--vaults v1,v2]")
+            show_warning("Usage: token update HASH_PREFIX [--permissions read,write] [--resources r1,r2]")
             return
         hash_prefix = update_parts[0]
         permissions = ""
-        vaults = ""
+        resources = ""
         i = 1
         while i < len(update_parts):
             if update_parts[i] == "--permissions" and i + 1 < len(update_parts):
