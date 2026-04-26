@@ -106,28 +106,33 @@ It does not replace real Cloud Temple / Dell ECS validation.
 
 Real S3 tests should run only in nightly/manual workflows using GitHub environment secrets (for example `nightly-real-s3`).
 
-## Nightly/manual real S3 workflow
+## Real S3 validation (manual / controlled environment)
 
-Workflow:
+The real S3 TokenStore test is available at:
 
 ```text
-.github/workflows/nightly-real-s3.yml
+tests/integration/test_real_s3_tokenstore.py
 ```
 
-This workflow is intentionally not part of the default PR/push CI. It runs on:
+It is intentionally **not** wired to GitHub-hosted CI for now.
 
-- `workflow_dispatch`
-- nightly schedule
+Reason: the dedicated Cloud Temple S3 bucket uses `accessType: custom` with a strict IP whitelist. GitHub-hosted runners use dynamic public IPs and can fail with `AccessDenied` even when credentials and grants are correct.
 
-It requires the GitHub Actions environment:
+Default CI therefore remains:
 
 ```text
-nightly-real-s3
+GitHub-hosted CI → MinIO only
 ```
 
-Expected environment secrets:
+Real S3 validation should be run either:
+
+- manually from a whitelisted IP, or
+- later from a self-hosted GitHub runner with a whitelisted fixed egress IP.
+
+Required environment variables for manual real S3 execution:
 
 ```text
+RUN_REAL_S3=1
 S3_ENDPOINT_URL
 S3_ACCESS_KEY_ID
 S3_SECRET_ACCESS_KEY
@@ -135,4 +140,10 @@ S3_BUCKET_NAME
 S3_REGION_NAME
 ```
 
-The credentials must point to the dedicated test bucket and must never be committed to git.
+Example:
+
+```bash
+RUN_REAL_S3=1 python3.11 -m pytest tests/integration/test_real_s3_tokenstore.py -q -m real_s3
+```
+
+Credentials must be read from MCP Vault and must never be committed to git.
