@@ -1,0 +1,30 @@
+# =============================================================================
+# .gitignore — Starter Kit MCP Cloud Temple
+# =============================================================================
+
+# --- Secrets & config locale ---
+.env
+.clinerules/
+
+# --- Python ---
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS ---
+.DS_Store
+Thumbs.db

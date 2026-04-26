@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Temple — Admin Console</title>
+    <link rel="stylesheet" href="/admin/static/css/admin.css">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LOGIN
+     ═══════════════════════════════════════════════════════════ -->
+<div class="login-overlay" id="loginOverlay">
+    <div class="login-card">
+        <img src="/admin/static/img/logo-cloudtemple.svg" alt="Cloud Temple" class="login-logo">
+        <h2>Admin Console</h2>
+        <p class="login-subtitle">Gestion du service MCP</p>
+        <form class="login-form" id="loginForm">
+            <label for="loginToken">🔑 Token d'accès</label>
+            <input type="password" id="loginToken"
+                   placeholder="Collez votre token ici…"
+                   autocomplete="off" autofocus>
+            <div class="login-error" id="loginError"></div>
+            <button type="submit">Se connecter</button>
+        </form>
+        <p class="login-hint">Contactez votre administrateur pour obtenir un token.</p>
+    </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════
+     APPLICATION PRINCIPALE
+     ═══════════════════════════════════════════════════════════ -->
+<div id="appMain" class="hidden">
+
+    <!-- Header -->
+    <div class="header">
+        <div class="header-brand">
+            <img src="/admin/static/img/logo-cloudtemple.svg" alt="Cloud Temple" class="header-logo">
+            <span class="header-sep">|</span>
+            <h1 id="headerTitle">Admin Console</h1>
+        </div>
+        <div class="header-right">
+            <span id="headerUser" class="header-user"></span>
+            <span id="headerVersion" class="header-version"></span>
+            <button class="btn-logout" onclick="logout()" title="Déconnexion">🔓</button>
+        </div>
+    </div>
+
+    <!-- Layout : Sidebar + Contenu principal -->
+    <div class="app-layout">
+
+        <!-- Sidebar navigation -->
+        <div class="sidebar">
+            <div class="sidebar-title">Navigation</div>
+            <div class="sidebar-nav" id="sidebarNav">
+
+                <!-- Pages système (toujours présentes) -->
+                <button onclick="showPage('dashboard')" class="active" data-page="dashboard">
+                    <span>📊</span><span>Dashboard</span>
+                </button>
+                <button onclick="showPage('tokens')" data-page="tokens">
+                    <span>🔑</span><span>Tokens</span>
+                </button>
+                <button onclick="showPage('activity')" data-page="activity">
+                    <span>📋</span><span>Activité</span>
+                </button>
+
+                <!-- ═══ AJOUTER VOS PAGES MÉTIER ICI ═══ -->
+                <!--
+                <div class="sidebar-section">Mon Service</div>
+                <button onclick="showPage('ma-ressource')" data-page="ma-ressource">
+                    <span>🗄️</span><span>Ma ressource</span>
+                </button>
+                -->
+
+            </div>
+        </div>
+
+        <!-- Zone de contenu principal -->
+        <div class="main-content">
+            <div id="page-dashboard"></div>
+            <div id="page-tokens" class="hidden"></div>
+            <div id="page-activity" class="hidden"></div>
+
+            <!-- ═══ AJOUTER VOS DIVS DE PAGES MÉTIER ICI ═══ -->
+            <!-- <div id="page-ma-ressource" class="hidden"></div> -->
+        </div>
+
+    </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════
+     MODAL — Créer un token
+     ═══════════════════════════════════════════════════════════ -->
+<div id="modalCreateToken" class="modal-overlay">
+    <div class="modal">
+        <h2>🔑 Nouveau token</h2>
+
+        <div class="form-group">
+            <label for="ctName">Nom du client <span class="field-required">*</span></label>
+            <input type="text" id="ctName"
+                   placeholder="ex: agent-prod, ci-pipeline, admin-user">
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="ctEmail">Email</label>
+                <input type="email" id="ctEmail" placeholder="admin@company.com">
+            </div>
+            <div class="form-group">
+                <label for="ctExpires">Expiration (jours)</label>
+                <input type="number" id="ctExpires" value="90" min="0">
+                <div class="help-text">0 = pas d'expiration</div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Permissions</label>
+            <div class="checkbox-group">
+                <label title="Accès en lecture — toujours activé">
+                    <input type="checkbox" checked disabled> read
+                </label>
+                <label title="Écriture et modification de ressources">
+                    <input type="checkbox" id="ctPermWrite"> write
+                </label>
+                <label title="Accès total — gestion des tokens et configuration">
+                    <input type="checkbox" id="ctPermAdmin"> admin
+                </label>
+            </div>
+        </div>
+
+        <div class="modal-actions">
+            <button class="btn btn-ghost" onclick="closeModal('modalCreateToken')">Annuler</button>
+            <button class="btn btn-primary" onclick="doCreateToken()">Créer le token</button>
+        </div>
+    </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════
+     MODAL — Affichage du token créé (one-time display)
+     ═══════════════════════════════════════════════════════════ -->
+<div id="modalTokenResult" class="modal-overlay">
+    <div class="modal">
+        <h2>✅ Token créé</h2>
+        <p style="color: var(--warning); font-size: 0.85rem; margin-bottom: 0.8rem;">
+            ⚠️ Ce token ne sera plus affiché après fermeture de cette fenêtre.<br>
+            Sauvegardez-le maintenant dans un endroit sûr.
+        </p>
+        <div class="token-display">
+            <span id="tokenResultValue"></span>
+            <button class="copy-btn" onclick="copyToken()">Copier</button>
+        </div>
+        <div id="tokenResultMeta"
+             style="font-size: 0.8rem; color: var(--text2); margin-top: 0.4rem;">
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-primary" onclick="closeModal('modalTokenResult')">
+                ✓ J'ai sauvegardé le token
+            </button>
+        </div>
+    </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════
+     SCRIPTS
+     Ordre de chargement important :
+       1. config.js  — variables globales (API_BASE, AUTH_TOKEN, headers)
+       2. api.js     — fonctions fetch (apiGet, apiPost, apiPut, apiDelete)
+       3. dashboard.js, tokens.js, activity.js — logique métier des pages
+       4. app.js     — navigation, auth, init (EN DERNIER)
+     ═══════════════════════════════════════════════════════════ -->
+<script src="/admin/static/js/config.js"></script>
+<script src="/admin/static/js/api.js"></script>
+<script src="/admin/static/js/dashboard.js"></script>
+<script src="/admin/static/js/tokens.js"></script>
+<script src="/admin/static/js/activity.js"></script>
+<!-- Ajouter vos fichiers JS métier ici avant app.js -->
+<!-- <script src="/admin/static/js/ma-page.js"></script> -->
+<script src="/admin/static/js/app.js"></script>
+</body>
+</html>

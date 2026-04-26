@@ -1,0 +1,45 @@
+# =============================================================================
+# .gitignore — Serveur MCP Cloud Temple
+# =============================================================================
+
+# --- Secrets & config locale (NE JAMAIS committer) ---
+.env
+.clinerules/
+
+# --- Python ---
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*.orig
+
+# --- Tests ---
+.coverage
+htmlcov/
+.tox/
+
+# --- Docker ---
+# Les volumes Docker sont gérés par docker-compose, pas par git
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs ---
+*.log
+logs/
