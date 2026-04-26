@@ -1,0 +1,72 @@
+# docker-compose.ci.yml — CI stack with MinIO-backed S3 TokenStore.
+#
+# Purpose:
+#   - secretless PR/push e2e
+#   - validates functional S3TokenStore behavior with _system/tokens.json
+#   - does NOT replace nightly/manual tests against real Cloud Temple S3 / Dell ECS
+
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    networks:
+      - mcp-net
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 2; done &&
+      mc mb --ignore-existing local/starterkit-ci &&
+      mc anonymous set none local/starterkit-ci
+      "
+    networks:
+      - mcp-net
+
+  mon-mcp:
+    build: .
+    expose:
+      - "8002"
+    environment:
+      MCP_SERVER_NAME: starter-kit-ci
+      MCP_SERVER_HOST: 0.0.0.0
+      MCP_SERVER_PORT: 8002
+      ADMIN_BOOTSTRAP_KEY: test-ci-bootstrap-key
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+      S3_BUCKET_NAME: starterkit-ci
+      S3_REGION_NAME: fr1
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r=httpx.get('http://localhost:8002/health'); assert r.status_code==200"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - mcp-net
+
+  waf:
+    build: ./waf
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./waf/Caddyfile:/etc/caddy/Caddyfile:ro
+    environment:
+      SITE_ADDRESS: :8082
+    depends_on:
+      mon-mcp:
+        condition: service_healthy
+    networks:
+      - mcp-net
+
+networks:
+  mcp-net:
+    driver: bridge
