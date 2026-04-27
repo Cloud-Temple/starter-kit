@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     # --- Auth ---
     admin_bootstrap_key: str = "change_me_in_production"
 
+    # --- Token Store backend ---
+    # Valeurs: s3 (défaut), vault (à venir)
+    token_store_backend: str = "s3"
+    token_store_cache_ttl: int = 300
+    token_store_fail_mode: str = "fail_close"
+
     # --- S3 Token Store (optionnel — si vide, tokens en mémoire uniquement) ---
     s3_endpoint_url: str = ""
     s3_access_key_id: str = ""

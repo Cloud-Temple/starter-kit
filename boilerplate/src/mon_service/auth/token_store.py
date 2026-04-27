@@ -32,16 +32,28 @@ def get_token_store() -> Optional["S3TokenStore"]:
 
 
 def init_token_store():
-    """Initialise le Token Store au démarrage (charge depuis S3 si configuré)."""
+    """Initialise le Token Store au démarrage selon TOKEN_STORE_BACKEND."""
     global _token_store
     settings = get_settings()
+    backend = getattr(settings, "token_store_backend", "s3").strip().lower()
 
-    if settings.s3_endpoint_url and settings.s3_bucket_name:
-        _token_store = S3TokenStore(settings)
-        _token_store.load()
-        print(f"🔑 Token Store S3 initialisé ({_token_store.count()} tokens)", file=sys.stderr)
-    else:
-        print("🔑 Token Store S3 non configuré (bootstrap key uniquement)", file=sys.stderr)
+    if backend == "s3":
+        if settings.s3_endpoint_url and settings.s3_bucket_name:
+            _token_store = S3TokenStore(settings)
+            _token_store.load()
+            print(f"🔑 Token Store S3 initialisé ({_token_store.count()} tokens)", file=sys.stderr)
+        else:
+            _token_store = None
+            print("🔑 Token Store S3 non configuré (bootstrap key uniquement)", file=sys.stderr)
+        return
+
+    if backend == "vault":
+        raise NotImplementedError(
+            "TOKEN_STORE_BACKEND=vault is not implemented yet. "
+            "This branch first introduces the backend factory; VaultTokenStore comes next."
+        )
+
+    raise ValueError(f"Unsupported TOKEN_STORE_BACKEND: {backend}")
 
 
 # =============================================================================
