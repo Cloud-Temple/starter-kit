@@ -23,7 +23,7 @@ import traceback
 from pathlib import Path
 
 from ..config import get_settings
-from ..auth.token_store import get_token_store
+from ..auth.token_store import get_token_store, get_token_store_status
 from ..auth.middleware import get_activity_log
 from ..branding import get_brand_profile
 
@@ -106,6 +106,7 @@ async def _api_health(send, mcp):
         "tools_count": len(tools),
         "tools": tools,
         "s3_configured": bool(settings.s3_endpoint_url),
+        "token_store": get_token_store_status(),
     })
 
 

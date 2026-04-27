@@ -60,9 +60,37 @@ def validate_vault_settings(settings) -> str:
 _token_store = None
 
 
-def get_token_store() -> Optional["S3TokenStore"]:
+def get_token_store() -> Optional[object]:
     """Retourne le Token Store (None si S3 non configuré)."""
     return _token_store
+
+
+def get_token_store_status() -> dict:
+    """Return non-sensitive status information about the active token store."""
+    settings = get_settings()
+    backend = getattr(settings, "token_store_backend", "s3").strip().lower()
+    store = get_token_store()
+
+    status = {
+        "backend": backend,
+        "configured": False,
+        "loaded": store is not None,
+        "tokens_count": store.count() if store else 0,
+        "cache_ttl": int(getattr(settings, "token_store_cache_ttl", 300) or 300),
+    }
+
+    if backend == "s3":
+        status["configured"] = bool(settings.s3_endpoint_url and settings.s3_bucket_name)
+        status["bucket_name"] = settings.s3_bucket_name if settings.s3_bucket_name else ""
+        return status
+
+    if backend == "vault":
+        status["vault_id"] = getattr(settings, "mcp_vault_id", "") or ""
+        status["path"] = getattr(settings, "mcp_vault_token_store_path", "") or ""
+        status["configured"] = bool(status["vault_id"] and get_vault_application_token(settings))
+        return status
+
+    return status
 
 
 def init_token_store():

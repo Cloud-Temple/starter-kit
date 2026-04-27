@@ -107,3 +107,28 @@ def test_vault_backend_valid_config_is_accepted(monkeypatch):
 
     settings = get_settings()
     assert token_store.validate_vault_settings(settings) == "token-from-env"
+
+
+def test_s3_token_store_status_without_s3_config():
+    status = token_store.get_token_store_status()
+    assert status["backend"] == "s3"
+    assert status["configured"] is False
+    assert status["loaded"] is False
+    assert status["tokens_count"] == 0
+    assert status["cache_ttl"] == 300
+
+
+def test_vault_token_store_status_masks_token(monkeypatch):
+    monkeypatch.setenv("TOKEN_STORE_BACKEND", "vault")
+    monkeypatch.setenv("MCP_VAULT_ID", "my-vault")
+    monkeypatch.setenv("MCP_VAULT_TOKEN", "super-secret-token")
+    get_settings.cache_clear()
+
+    status = token_store.get_token_store_status()
+    assert status["backend"] == "vault"
+    assert status["configured"] is True
+    assert status["loaded"] is False
+    assert status["tokens_count"] == 0
+    assert status["vault_id"] == "my-vault"
+    assert status["path"] == "token-store/tokens.json"
+    assert "super-secret-token" not in str(status)
