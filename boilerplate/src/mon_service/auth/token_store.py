@@ -426,18 +426,135 @@ class VaultTokenStore:
             for t in self._tokens.values()
         ]
 
+    def _save(self):
+        """Sauvegarde les tokens dans MCP Vault."""
+        import httpx
+
+        url = f"{self.settings.mcp_vault_url.rstrip('/')}/admin/api/vaults/{self.settings.mcp_vault_id}/secrets"
+        body = {
+            "path": self.settings.mcp_vault_token_store_path,
+            "type": "custom",
+            "data": {"tokens": list(self._tokens.values())},
+        }
+        try:
+            resp = httpx.post(
+                url,
+                headers={**self._headers(), "Content-Type": "application/json"},
+                json=body,
+                timeout=float(getattr(self.settings, "mcp_vault_timeout", 5.0) or 5.0),
+            )
+        except httpx.TimeoutException as exc:
+            raise RuntimeError("MCP Vault unavailable: timeout while saving token store") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"MCP Vault unavailable while saving token store: {exc}") from exc
+
+        if resp.status_code in (401, 403):
+            raise RuntimeError(f"MCP Vault permission denied while saving token store (HTTP {resp.status_code})")
+        if resp.status_code >= 500:
+            raise RuntimeError(f"MCP Vault unavailable while saving token store (HTTP {resp.status_code})")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"MCP Vault error while saving token store (HTTP {resp.status_code})")
+
+    def create(self, client_name: str, permissions: list, allowed_resources: list = None,
+               expires_in_days: int = 90, email: str = "", policy_id: str = "") -> dict:
+        """Crée un nouveau token et le sauvegarde dans MCP Vault."""
+        import secrets
+        from datetime import datetime, timezone, timedelta
+
+        # Best-effort race reduction: start from latest Vault state before mutating.
+        self.load()
+
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+
+        now = datetime.now(timezone.utc)
+        expires_at = None
+        if expires_in_days and expires_in_days > 0:
+            expires_at = (now + timedelta(days=expires_in_days)).isoformat()
+
+        token_info = {
+            "hash": token_hash,
+            "client_name": client_name,
+            "permissions": permissions,
+            "allowed_resources": allowed_resources or [],
+            "policy_id": policy_id,
+            "email": email,
+            "created_at": now.isoformat(),
+            "expires_at": expires_at,
+            "revoked": False,
+        }
+
+        self._tokens[token_hash] = token_info
+        self._save()
+
+        return {"raw_token": raw_token, **token_info}
+
+    def update(self, hash_prefix: str, policy_id: str = None,
+               permissions: list = None, allowed_resources: list = None) -> dict:
+        """Modifie un token existant dans MCP Vault."""
+        if len(hash_prefix) < 8:
+            return {"status": "error", "message": "Hash prefix trop court (min 8 caractères)"}
+
+        self.load()
+
+        target_hash = None
+        for h in self._tokens:
+            if h.startswith(hash_prefix):
+                target_hash = h
+                break
+
+        if not target_hash:
+            return {"status": "error", "message": f"Token {hash_prefix[:12]}… non trouvé"}
+
+        token = self._tokens[target_hash]
+        if token.get("revoked"):
+            return {"status": "error", "message": f"Token {hash_prefix[:12]}… est révoqué"}
+
+        updated_fields = []
+        if policy_id is not None:
+            token["policy_id"] = policy_id
+            updated_fields.append("policy_id")
+        if permissions is not None:
+            token["permissions"] = permissions
+            updated_fields.append("permissions")
+        if allowed_resources is not None:
+            token["allowed_resources"] = allowed_resources
+            updated_fields.append("allowed_resources")
+
+        if not updated_fields:
+            return {"status": "error", "message": "Aucun champ à modifier"}
+
+        self._save()
+
+        return {
+            "status": "updated",
+            "client_name": token.get("client_name", "?"),
+            "hash_prefix": target_hash[:12],
+            "updated_fields": updated_fields,
+            "policy_id": token.get("policy_id", ""),
+            "permissions": token.get("permissions", []),
+            "allowed_resources": token.get("allowed_resources", []),
+        }
+
+    def revoke(self, hash_prefix: str) -> bool:
+        """Révoque un token par préfixe de hash dans MCP Vault."""
+        if len(hash_prefix) < 8:
+            return False
+
+        self.load()
+
+        from datetime import datetime, timezone
+        for h, t in self._tokens.items():
+            if h.startswith(hash_prefix):
+                t["revoked"] = True
+                t["revoked_at"] = datetime.now(timezone.utc).isoformat()
+                self._save()
+                return True
+        return False
+
     def count(self) -> int:
         """Nombre de tokens actifs (non révoqués)."""
         return sum(1 for t in self._tokens.values() if not t.get("revoked", False))
-
-    def create(self, *args, **kwargs) -> dict:
-        raise NotImplementedError("VaultTokenStore.create will be implemented in the next step")
-
-    def update(self, *args, **kwargs) -> dict:
-        raise NotImplementedError("VaultTokenStore.update will be implemented in the next step")
-
-    def revoke(self, *args, **kwargs) -> bool:
-        raise NotImplementedError("VaultTokenStore.revoke will be implemented in the next step")
 
 
 # Backward-compatible alias for existing imports/tests.
