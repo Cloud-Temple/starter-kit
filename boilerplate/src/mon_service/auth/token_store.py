@@ -223,7 +223,7 @@ class S3TokenStore:
         return token
 
     def create(self, client_name: str, permissions: list, allowed_resources: list = None,
-               expires_in_days: int = 90, email: str = "") -> dict:
+               expires_in_days: int = 90, email: str = "", policy_id: str = "") -> dict:
         """Crée un nouveau token et le sauvegarde sur S3."""
         import secrets
         from datetime import datetime, timezone, timedelta
@@ -241,6 +241,7 @@ class S3TokenStore:
             "client_name": client_name,
             "permissions": permissions,
             "allowed_resources": allowed_resources or [],
+            "policy_id": policy_id,
             "email": email,
             "created_at": now.isoformat(),
             "expires_at": expires_at,
@@ -259,6 +260,7 @@ class S3TokenStore:
             {
                 "client_name": t["client_name"],
                 "permissions": t["permissions"],
+                "policy_id": t.get("policy_id", ""),
                 "email": t.get("email", ""),
                 "hash_prefix": t["hash"][:12],
                 "expires_at": t.get("expires_at"),
@@ -284,9 +286,9 @@ class S3TokenStore:
         return False
 
     def update(self, hash_prefix: str, permissions: list = None,
-               allowed_resources: list = None) -> dict:
+               allowed_resources: list = None, policy_id: str = None) -> dict:
         """
-        Modifie les permissions et/ou ressources autorisées d'un token.
+        Modifie les métadonnées policy_id, permissions et/ou ressources autorisées d'un token.
 
         Seuls les champs fournis (non None) sont modifiés.
         ⚠️ hash_prefix doit faire ≥ 8 caractères (anti-collision).
@@ -297,6 +299,9 @@ class S3TokenStore:
         for h, t in self._tokens.items():
             if h.startswith(hash_prefix):
                 updated_fields = []
+                if policy_id is not None:
+                    t["policy_id"] = policy_id
+                    updated_fields.append("policy_id")
                 if permissions is not None:
                     t["permissions"] = permissions
                     updated_fields.append("permissions")
@@ -316,6 +321,7 @@ class S3TokenStore:
                     "client_name": t.get("client_name", "?"),
                     "hash_prefix": h[:12],
                     "updated_fields": updated_fields,
+                    "policy_id": t.get("policy_id", ""),
                     "permissions": t.get("permissions", []),
                     "allowed_resources": t.get("allowed_resources", []),
                 }

@@ -114,6 +114,7 @@ async def test_vault_tokenstore_end_to_end():
             "permissions": ["read", "write"],
             "allowed_resources": [],
             "email": "ci-vault@example.test",
+            "policy_id": "vault-e2e-policy",
             "expires_in_days": 1,
         },
         timeout=10,
@@ -136,6 +137,7 @@ async def test_vault_tokenstore_end_to_end():
     persisted_token = persisted["data"]["tokens"][0]
     assert persisted_token["client_name"] == "ci-vault-e2e-agent"
     assert persisted_token["permissions"] == ["read", "write"]
+    assert persisted_token["policy_id"] == "vault-e2e-policy"
     assert "raw_token" not in persisted_token
 
     # Token can authenticate MCP tool system_whoami.

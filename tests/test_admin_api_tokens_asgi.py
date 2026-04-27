@@ -45,7 +45,7 @@ class FakeTokenStore:
         # Test fake: no non-bootstrap token is valid unless explicitly added.
         return None
 
-    def create(self, client_name, permissions, allowed_resources=None, expires_in_days=90, email=""):
+    def create(self, client_name, permissions, allowed_resources=None, expires_in_days=90, email="", policy_id=""):
         token = {
             "raw_token": "raw-token-once",
             "hash": "abcdef1234567890",
@@ -53,6 +53,7 @@ class FakeTokenStore:
             "client_name": client_name,
             "permissions": permissions,
             "allowed_resources": allowed_resources or [],
+            "policy_id": policy_id,
             "email": email,
             "expires_at": "2099-01-01T00:00:00+00:00" if expires_in_days else None,
             "revoked": False,
@@ -61,6 +62,7 @@ class FakeTokenStore:
             "client_name": client_name,
             "permissions": permissions,
             "allowed_resources": allowed_resources or [],
+            "policy_id": policy_id,
             "email": email,
             "hash_prefix": token["hash_prefix"],
             "expires_at": token["expires_at"],
@@ -68,11 +70,14 @@ class FakeTokenStore:
         }
         return token
 
-    def update(self, hash_prefix, permissions=None, allowed_resources=None):
+    def update(self, hash_prefix, policy_id=None, permissions=None, allowed_resources=None):
         token = self.tokens.get(hash_prefix[:12])
         if not token:
             return {"status": "error", "message": "Token non trouvé"}
         updated = []
+        if policy_id is not None:
+            token["policy_id"] = policy_id
+            updated.append("policy_id")
         if permissions is not None:
             token["permissions"] = permissions
             updated.append("permissions")
@@ -81,7 +86,12 @@ class FakeTokenStore:
             updated.append("allowed_resources")
         if not updated:
             return {"status": "error", "message": "Aucun champ à modifier"}
-        return {"status": "updated", "hash_prefix": token["hash_prefix"], "updated_fields": updated}
+        return {
+            "status": "updated",
+            "hash_prefix": token["hash_prefix"],
+            "updated_fields": updated,
+            "policy_id": token.get("policy_id", ""),
+        }
 
     def revoke(self, hash_prefix):
         token = self.tokens.get(hash_prefix[:12])
@@ -169,6 +179,7 @@ async def test_admin_token_crud_asgi(fake_store):
         "client_name": "agent-asgi",
         "permissions": ["read", "write"],
         "allowed_resources": ["resource-a"],
+        "policy_id": "policy-a",
         "email": "agent@example.test",
         "expires_in_days": 30,
     })
@@ -177,19 +188,23 @@ async def test_admin_token_crud_asgi(fake_store):
     assert created["status"] == "created"
     assert created["raw_token"] == "raw-token-once"
     assert created["permissions"] == ["read", "write"]
+    assert created["policy_id"] == "policy-a"
 
     status, listed = await call_admin("GET", "/admin/api/tokens")
     assert status == 200
     assert listed["status"] == "ok"
     assert listed["tokens"][0]["client_name"] == "agent-asgi"
+    assert listed["tokens"][0]["policy_id"] == "policy-a"
 
     status, updated = await call_admin("PUT", "/admin/api/tokens/abcdef123456", {
         "permissions": ["read"],
         "allowed_resources": ["resource-b"],
+        "policy_id": "policy-b",
     })
     assert status == 200
     assert updated["status"] == "updated"
-    assert set(updated["updated_fields"]) == {"permissions", "allowed_resources"}
+    assert set(updated["updated_fields"]) == {"permissions", "allowed_resources", "policy_id"}
+    assert updated["policy_id"] == "policy-b"
 
     status, revoked = await call_admin("DELETE", "/admin/api/tokens/abcdef123456")
     assert status == 200
@@ -197,6 +212,7 @@ async def test_admin_token_crud_asgi(fake_store):
 
     status, listed = await call_admin("GET", "/admin/api/tokens")
     assert listed["tokens"][0]["revoked"] is True
+    assert listed["tokens"][0]["policy_id"] == "policy-b"
 
 
 @pytest.mark.asyncio
