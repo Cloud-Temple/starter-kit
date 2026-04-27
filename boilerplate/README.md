@@ -216,3 +216,152 @@ Pour ajouter une page métier :
 ## Licence
 
 Cloud Temple — Usage interne.
+
+---
+
+## Token Store backend: S3 ou MCP Vault
+
+Le starter-kit supporte un backend de Token Store configurable.
+
+Par défaut :
+
+```env
+TOKEN_STORE_BACKEND=s3
+```
+
+Le backend S3 conserve le comportement historique :
+
+```text
+_system/tokens.json
+```
+
+sur le bucket S3 configuré.
+
+### Backend S3
+
+Variables principales :
+
+```env
+TOKEN_STORE_BACKEND=s3
+TOKEN_STORE_CACHE_TTL=300
+TOKEN_STORE_FAIL_MODE=fail_close
+
+S3_ENDPOINT_URL=
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=
+S3_BUCKET_NAME=
+S3_REGION_NAME=fr1
+S3_SIGNATURE_VERSION=s3
+S3_ADDRESSING_STYLE=path
+```
+
+Note Cloud Temple / Dell ECS :
+
+```env
+S3_SIGNATURE_VERSION=s3
+S3_ADDRESSING_STYLE=path
+```
+
+est le défaut recommandé pour les opérations objet (`GET`, `PUT`, `DELETE`).
+
+### Backend MCP Vault
+
+Pour stocker les tokens clients MCP dans MCP Vault :
+
+```env
+TOKEN_STORE_BACKEND=vault
+TOKEN_STORE_CACHE_TTL=300
+TOKEN_STORE_FAIL_MODE=fail_close
+
+MCP_VAULT_URL=https://vault.mcp.cloud-temple.app
+MCP_VAULT_TOKEN_FILE=/run/secrets/mcp_vault_token
+MCP_VAULT_TOKEN=
+MCP_VAULT_ID=my-mcp-vault
+MCP_VAULT_TOKEN_STORE_PATH=token-store/tokens.json
+MCP_VAULT_TIMEOUT=5
+```
+
+Le token applicatif Vault sert au serveur MCP pour lire/écrire son Token Store dans MCP Vault.
+
+Priorité :
+
+```text
+MCP_VAULT_TOKEN_FILE > MCP_VAULT_TOKEN
+```
+
+En production, préférer `MCP_VAULT_TOKEN_FILE`.
+
+### Format Vault V1
+
+Le backend Vault V1 utilise un secret JSON unique :
+
+```text
+vault: <MCP_VAULT_ID>
+path: token-store/tokens.json
+```
+
+Payload :
+
+```json
+{
+  "tokens": [
+    {
+      "hash": "sha256(raw_token)",
+      "client_name": "agent",
+      "permissions": ["read"],
+      "allowed_resources": [],
+      "policy_id": "",
+      "email": "",
+      "created_at": "...",
+      "expires_at": "...",
+      "revoked": false,
+      "revoked_at": ""
+    }
+  ]
+}
+```
+
+Le token brut n'est jamais stocké. Il est affiché une seule fois à la création.
+
+### Fail-close
+
+Le comportement recommandé est sécurisé par défaut :
+
+```text
+Vault indisponible + token absent du cache = authentification refusée
+Vault indisponible au démarrage = aucun token client chargé
+Bootstrap key local = reste utilisable
+```
+
+Si Vault est indisponible, l'admin peut encore se connecter via la bootstrap key, mais `token create/update/revoke` ne pourra pas persister tant que Vault n'est pas disponible.
+
+### Health
+
+`GET /admin/api/health` expose un statut non sensible :
+
+```json
+{
+  "token_store": {
+    "backend": "vault",
+    "configured": true,
+    "loaded": true,
+    "tokens_count": 3,
+    "cache_ttl": 300,
+    "vault_id": "my-mcp-vault",
+    "path": "token-store/tokens.json"
+  }
+}
+```
+
+Ne sont jamais exposés :
+
+- `MCP_VAULT_TOKEN`
+- le contenu de `tokens.json`
+- les tokens clients bruts
+- les secrets S3
+
+### Policies
+
+`policy_id` peut être stocké comme métadonnée de token.
+
+Cette version ne fournit pas encore de `PolicyStore` complet ni d'enforcement `allowed_tools` / `denied_tools` / `path_rules`.

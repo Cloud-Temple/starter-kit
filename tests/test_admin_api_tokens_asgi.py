@@ -158,6 +158,9 @@ async def test_admin_health_asgi(fake_store):
     assert data["service_name"] == "starter-kit-test"
     assert data["tools_count"] == 2
     assert data["tools"] == ["system_health", "system_about"]
+    assert data["token_store"]["backend"] == "s3"
+    assert data["token_store"]["tokens_count"] == 0
+    assert "S3_SECRET_ACCESS_KEY" not in json.dumps(data)
 
 
 @pytest.mark.asyncio
