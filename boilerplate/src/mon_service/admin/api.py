@@ -149,12 +149,13 @@ async def _api_create_token(send, body):
         })
 
     allowed_resources = data.get("allowed_resources", [])
+    policy_id = data.get("policy_id", "")
     email = data.get("email", "")
     expires_in_days = data.get("expires_in_days", 90)
 
     result = store.create(
         client_name, permissions, allowed_resources,
-        expires_in_days=expires_in_days, email=email,
+        expires_in_days=expires_in_days, email=email, policy_id=policy_id,
     )
     await _json_response(send, 201, {"status": "created", **result})
 
@@ -181,6 +182,7 @@ async def _api_update_token(send, hash_prefix, body):
     # Champs modifiables
     permissions = data.get("permissions")
     allowed_resources = data.get("allowed_resources")
+    policy_id = data.get("policy_id")
 
     # Validation des permissions si fournies
     if permissions is not None:
@@ -199,6 +201,7 @@ async def _api_update_token(send, hash_prefix, body):
 
     result = store.update(
         hash_prefix=hash_prefix,
+        policy_id=policy_id,
         permissions=permissions,
         allowed_resources=allowed_resources,
     )
