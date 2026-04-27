@@ -26,7 +26,7 @@ from ..config import get_settings
 _token_store = None
 
 
-def get_token_store() -> Optional["TokenStore"]:
+def get_token_store() -> Optional["S3TokenStore"]:
     """Retourne le Token Store (None si S3 non configuré)."""
     return _token_store
 
@@ -37,7 +37,7 @@ def init_token_store():
     settings = get_settings()
 
     if settings.s3_endpoint_url and settings.s3_bucket_name:
-        _token_store = TokenStore(settings)
+        _token_store = S3TokenStore(settings)
         _token_store.load()
         print(f"🔑 Token Store S3 initialisé ({_token_store.count()} tokens)", file=sys.stderr)
     else:
@@ -45,10 +45,10 @@ def init_token_store():
 
 
 # =============================================================================
-# TokenStore — Stockage S3 + cache mémoire TTL
+# S3TokenStore — Stockage S3 + cache mémoire TTL
 # =============================================================================
 
-class TokenStore:
+class S3TokenStore:
     """
     Gestion des tokens d'accès MCP.
 
@@ -250,3 +250,7 @@ class TokenStore:
     def count(self) -> int:
         """Nombre de tokens actifs (non révoqués)."""
         return sum(1 for t in self._tokens.values() if not t.get("revoked", False))
+
+
+# Backward-compatible alias for existing imports/tests.
+TokenStore = S3TokenStore
