@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     token_store_cache_ttl: int = 300
     token_store_fail_mode: str = "fail_close"
 
+    # --- MCP Vault Token Store (si TOKEN_STORE_BACKEND=vault) ---
+    mcp_vault_url: str = "https://vault.mcp.cloud-temple.app"
+    mcp_vault_token_file: str = ""
+    mcp_vault_token: str = ""
+    mcp_vault_id: str = ""
+    mcp_vault_token_store_path: str = "token-store/tokens.json"
+    mcp_vault_timeout: float = 5.0
+
     # --- S3 Token Store (optionnel — si vide, tokens en mémoire uniquement) ---
     s3_endpoint_url: str = ""
     s3_access_key_id: str = ""

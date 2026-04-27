@@ -20,6 +20,39 @@ from typing import Optional
 from ..config import get_settings
 
 # =============================================================================
+# Vault configuration helpers
+# =============================================================================
+
+
+def get_vault_application_token(settings) -> str:
+    """Return the MCP Vault application token.
+
+    Token file has priority over environment variable to support Docker/systemd
+    secret injection in production.
+    """
+    token_file = getattr(settings, "mcp_vault_token_file", "") or ""
+    if token_file:
+        from pathlib import Path
+        path = Path(token_file)
+        if path.exists():
+            return path.read_text().strip()
+    return (getattr(settings, "mcp_vault_token", "") or "").strip()
+
+
+def validate_vault_settings(settings) -> str:
+    """Validate Vault TokenStore settings and return the application token.
+
+    Raises ValueError with admin-readable messages for misconfiguration.
+    """
+    if not (getattr(settings, "mcp_vault_id", "") or "").strip():
+        raise ValueError("MCP_VAULT_ID is required when TOKEN_STORE_BACKEND=vault")
+    token = get_vault_application_token(settings)
+    if not token:
+        raise ValueError("MCP_VAULT_TOKEN_FILE or MCP_VAULT_TOKEN is required when TOKEN_STORE_BACKEND=vault")
+    return token
+
+
+# =============================================================================
 # Token Store singleton
 # =============================================================================
 
@@ -48,6 +81,7 @@ def init_token_store():
         return
 
     if backend == "vault":
+        validate_vault_settings(settings)
         raise NotImplementedError(
             "TOKEN_STORE_BACKEND=vault is not implemented yet. "
             "This branch first introduces the backend factory; VaultTokenStore comes next."
