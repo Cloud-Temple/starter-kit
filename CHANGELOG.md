@@ -190,15 +190,11 @@ It validates functional non-regression but does not replace real Cloud Temple / 
 
 ### Real S3
 
-The dedicated real S3 test bucket is:
-
-```text
-aiyou-mcp-starterkit-tokenstore-test
-```
+The real S3 validation uses a dedicated starter-kit real S3 test bucket.
 
 Credentials are stored in MCP Vault and GitHub environment secrets, not in git.
 
-Because the bucket uses `accessType: custom` with IP whitelisting, GitHub-hosted runners receive `AccessDenied`.
+Because the dedicated test bucket uses a custom access policy with IP whitelisting, GitHub-hosted runners receive `AccessDenied`.
 Real S3 validation must therefore be manual from a whitelisted IP or use a future self-hosted runner.
 
 ### VaultTokenStore V1
