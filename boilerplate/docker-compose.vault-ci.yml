@@ -1,0 +1,71 @@
+# docker-compose.vault-ci.yml — CI stack with fake MCP Vault-backed TokenStore.
+#
+# Purpose:
+#   - secretless PR/push e2e for TOKEN_STORE_BACKEND=vault
+#   - validates functional VaultTokenStore behavior with token-store/tokens.json
+#   - does NOT use real MCP Vault and does NOT replace manual live Vault validation
+
+services:
+  fake-vault:
+    image: python:3.11-slim
+    command: python /app/fake_mcp_vault.py
+    environment:
+      FAKE_VAULT_TOKEN: vault-token
+      FAKE_VAULT_PORT: 8080
+    volumes:
+      - ../tests/fixtures/fake_mcp_vault.py:/app/fake_mcp_vault.py:ro
+    expose:
+      - "8080"
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; r=urllib.request.urlopen('http://localhost:8080/health', timeout=3); assert r.status == 200"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - mcp-net
+
+  mon-mcp:
+    build: .
+    expose:
+      - "8002"
+    environment:
+      MCP_SERVER_NAME: starter-kit-vault-ci
+      MCP_SERVER_HOST: 0.0.0.0
+      MCP_SERVER_PORT: 8002
+      ADMIN_BOOTSTRAP_KEY: test-ci-bootstrap-key
+      TOKEN_STORE_BACKEND: vault
+      MCP_VAULT_URL: http://fake-vault:8080
+      MCP_VAULT_TOKEN: vault-token
+      MCP_VAULT_ID: test-vault
+      MCP_VAULT_TOKEN_STORE_PATH: token-store/tokens.json
+      MCP_VAULT_TIMEOUT: 5
+    depends_on:
+      fake-vault:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r=httpx.get('http://localhost:8002/health'); assert r.status_code==200"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - mcp-net
+
+  waf:
+    build: ./waf
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./waf/Caddyfile:/etc/caddy/Caddyfile:ro
+    environment:
+      SITE_ADDRESS: :8083
+    depends_on:
+      mon-mcp:
+        condition: service_healthy
+    networks:
+      - mcp-net
+
+networks:
+  mcp-net:
+    driver: bridge

@@ -9,8 +9,10 @@ flowchart TD
     A[PR / push CI] --> B[Unit + contract tests]
     A --> C[ASGI integration tests]
     A --> D[Docker Compose e2e with MinIO]
+    A --> E[Docker Compose e2e with fake MCP Vault]
 
-    E[Nightly / manual] --> F[Real Cloud Temple S3 / Dell ECS]
+    F[Nightly / manual] --> G[Real Cloud Temple S3 / Dell ECS]
+    F --> H[Live MCP Vault]
 ```
 
 ## Layers
@@ -75,6 +77,40 @@ Validates the concrete flow through WAF + MCP + MinIO-backed S3TokenStore:
 5. revoke token via `/admin/api/tokens/{hash_prefix}`
 6. revoked token is refused
 
+### 4. Docker Compose e2e with fake MCP Vault
+
+Files:
+
+```text
+tests/fixtures/fake_mcp_vault.py
+tests/e2e/test_vault_compose.py
+```
+
+Compose stack:
+
+```text
+boilerplate/docker-compose.vault-ci.yml
+```
+
+Validates the concrete flow through WAF + MCP + fake MCP Vault-backed `VaultTokenStore`:
+
+1. health through WAF
+2. admin health reports `TOKEN_STORE_BACKEND=vault` without exposing secrets
+3. create token via `/admin/api/tokens`
+4. token is persisted in the fake MCP Vault using a live-like response shape
+5. call `/mcp` with created token
+6. revoke token via `/admin/api/tokens/{hash_prefix}`
+7. revoked token is refused
+
+The fake MCP Vault intentionally supports only the endpoints used by `VaultTokenStore`:
+
+```text
+GET  /admin/api/vaults/{vault_id}/secrets/{encoded_path}
+POST /admin/api/vaults/{vault_id}/secrets
+```
+
+It checks the Bearer token, returns `404` when a secret is absent, and stores secrets in memory.
+
 ## Run locally
 
 ### Unit + ASGI integration tests
@@ -97,6 +133,16 @@ If the local default `python` is older than 3.10, use Python 3.11:
 
 ```bash
 RUN_COMPOSE_E2E=1 python3.11 -m pytest tests/e2e/test_minio_compose.py -q
+```
+
+### Docker Compose e2e with fake MCP Vault
+
+Requires Docker.
+
+```bash
+docker compose -f boilerplate/docker-compose.vault-ci.yml up -d --build
+RUN_COMPOSE_E2E=1 E2E_BASE_URL=http://localhost:8083 E2E_FAKE_VAULT_URL=http://localhost:18080 python -m pytest tests/e2e/test_vault_compose.py -q
+docker compose -f boilerplate/docker-compose.vault-ci.yml down -v
 ```
 
 ## Real S3 tests
