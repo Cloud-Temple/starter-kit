@@ -116,7 +116,7 @@ tests/integration/test_real_s3_tokenstore.py
 
 It is intentionally **not** wired to GitHub-hosted CI for now.
 
-Reason: the dedicated Cloud Temple S3 bucket uses `accessType: custom` with a strict IP whitelist. GitHub-hosted runners use dynamic public IPs and can fail with `AccessDenied` even when credentials and grants are correct.
+Reason: the dedicated Cloud Temple S3 test bucket uses a custom access policy with a strict IP whitelist. GitHub-hosted runners use dynamic public IPs and can fail with `AccessDenied` even when credentials and grants are correct.
 
 Default CI therefore remains:
 
@@ -147,3 +147,36 @@ RUN_REAL_S3=1 python3.11 -m pytest tests/integration/test_real_s3_tokenstore.py 
 ```
 
 Credentials must be read from MCP Vault and must never be committed to git.
+
+## Live MCP Vault validation
+
+`VaultTokenStore` is covered by mocked HTTP tests and by a local fake MCP Vault server in default CI.
+A live MCP Vault validation is also available for manual/certifying runs:
+
+```text
+tests/integration/test_live_vault_tokenstore.py
+```
+
+It is intentionally **not** wired to GitHub-hosted CI. It requires a dedicated test path and a limited RW Vault application token. Do not use a production token-store path.
+
+Required environment variables:
+
+```text
+RUN_LIVE_VAULT=1
+MCP_VAULT_URL=https://vault.mcp.cloud-temple.app
+MCP_VAULT_TOKEN
+MCP_VAULT_ID
+MCP_VAULT_TOKEN_STORE_PATH=token-store/live-vault-validation.json
+MCP_VAULT_TIMEOUT=5
+```
+
+Example:
+
+```bash
+RUN_LIVE_VAULT=1 python3.11 -m pytest tests/integration/test_live_vault_tokenstore.py -q -m live_vault
+```
+
+The test starts from an empty dedicated secret, exercises create/list/update/revoke, verifies that raw client tokens are not persisted, and restores the original secret data afterward.
+
+Credentials must be read from MCP Vault or a local secure channel and must never be committed to git.
+
