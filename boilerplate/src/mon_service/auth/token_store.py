@@ -16,6 +16,7 @@ import time
 import json
 import hashlib
 from typing import Optional
+from urllib.parse import quote
 
 from ..config import get_settings
 
@@ -82,10 +83,10 @@ def init_token_store():
 
     if backend == "vault":
         validate_vault_settings(settings)
-        raise NotImplementedError(
-            "TOKEN_STORE_BACKEND=vault is not implemented yet. "
-            "This branch first introduces the backend factory; VaultTokenStore comes next."
-        )
+        _token_store = VaultTokenStore(settings)
+        _token_store.load()
+        print(f"🔑 Token Store Vault initialisé ({_token_store.count()} tokens)", file=sys.stderr)
+        return
 
     raise ValueError(f"Unsupported TOKEN_STORE_BACKEND: {backend}")
 
@@ -296,6 +297,147 @@ class S3TokenStore:
     def count(self) -> int:
         """Nombre de tokens actifs (non révoqués)."""
         return sum(1 for t in self._tokens.values() if not t.get("revoked", False))
+
+
+# =============================================================================
+# VaultTokenStore — Stockage MCP Vault + cache mémoire TTL
+# =============================================================================
+
+class VaultTokenStore:
+    """TokenStore backend persisted as one JSON secret in MCP Vault.
+
+    V1 format stores the same logical payload as S3TokenStore under:
+
+        vault: settings.mcp_vault_id
+        path:  settings.mcp_vault_token_store_path
+
+    Only `load`, `get_by_hash`, `list_all` and `count` are implemented in this
+    step. Mutating operations are implemented in the next step.
+    """
+
+    def __init__(self, settings):
+        self.settings = settings
+        self._tokens: dict = {}
+        self._cache_time: float = 0
+        self._vault_token = get_vault_application_token(settings)
+
+    @property
+    def CACHE_TTL(self) -> int:
+        return int(getattr(self.settings, "token_store_cache_ttl", 300) or 300)
+
+    def _headers(self) -> dict:
+        return {"Authorization": f"Bearer {self._vault_token}"}
+
+    def _secret_url(self) -> str:
+        base = self.settings.mcp_vault_url.rstrip("/")
+        path = quote(self.settings.mcp_vault_token_store_path, safe="")
+        return f"{base}/admin/api/vaults/{self.settings.mcp_vault_id}/secrets/{path}"
+
+    def load(self):
+        """Charge les tokens depuis MCP Vault.
+
+        - 404 => store vide
+        - 401/403 => erreur permission/auth claire
+        - 5xx/timeout => erreur Vault indisponible
+        """
+        import httpx
+
+        try:
+            resp = httpx.get(
+                self._secret_url(),
+                headers=self._headers(),
+                timeout=float(getattr(self.settings, "mcp_vault_timeout", 5.0) or 5.0),
+            )
+        except httpx.TimeoutException as exc:
+            self._tokens = {}
+            self._cache_time = time.time()
+            raise RuntimeError("MCP Vault unavailable: timeout while loading token store") from exc
+        except httpx.HTTPError as exc:
+            self._tokens = {}
+            self._cache_time = time.time()
+            raise RuntimeError(f"MCP Vault unavailable while loading token store: {exc}") from exc
+
+        if resp.status_code == 404:
+            self._tokens = {}
+            self._cache_time = time.time()
+            return
+
+        if resp.status_code in (401, 403):
+            self._tokens = {}
+            self._cache_time = time.time()
+            raise RuntimeError(f"MCP Vault permission denied while loading token store (HTTP {resp.status_code})")
+
+        if resp.status_code >= 500:
+            self._tokens = {}
+            self._cache_time = time.time()
+            raise RuntimeError(f"MCP Vault unavailable while loading token store (HTTP {resp.status_code})")
+
+        if resp.status_code >= 300:
+            self._tokens = {}
+            self._cache_time = time.time()
+            raise RuntimeError(f"MCP Vault error while loading token store (HTTP {resp.status_code})")
+
+        payload = resp.json()
+        data = payload.get("data", {}) if isinstance(payload, dict) else {}
+        tokens = data.get("tokens", []) if isinstance(data, dict) else []
+        if tokens is None:
+            tokens = []
+        if not isinstance(tokens, list):
+            raise RuntimeError("MCP Vault token store payload is invalid: data.tokens must be a list")
+
+        self._tokens = {t["hash"]: t for t in tokens if isinstance(t, dict) and "hash" in t}
+        self._cache_time = time.time()
+
+    def _maybe_refresh(self):
+        """Rafraîchit le cache si le TTL est dépassé."""
+        if time.time() - self._cache_time > self.CACHE_TTL:
+            self.load()
+
+    def get_by_hash(self, token_hash: str) -> Optional[dict]:
+        """Cherche un token par son hash SHA-256. Vérifie l'expiration."""
+        self._maybe_refresh()
+        token = self._tokens.get(token_hash)
+        if token and token.get("expires_at"):
+            from datetime import datetime, timezone
+            try:
+                expires = datetime.fromisoformat(token["expires_at"])
+                if datetime.now(timezone.utc) > expires:
+                    return None
+            except (ValueError, TypeError):
+                return None
+        return token
+
+    def list_all(self) -> list:
+        """Liste tous les tokens (sans hash complet)."""
+        self._maybe_refresh()
+        return [
+            {
+                "client_name": t["client_name"],
+                "permissions": t["permissions"],
+                "policy_id": t.get("policy_id", ""),
+                "email": t.get("email", ""),
+                "hash_prefix": t["hash"][:12],
+                "allowed_resources": t.get("allowed_resources", []),
+                "created_at": t.get("created_at", ""),
+                "expires_at": t.get("expires_at"),
+                "revoked": t.get("revoked", False),
+                "revoked_at": t.get("revoked_at", ""),
+            }
+            for t in self._tokens.values()
+        ]
+
+    def count(self) -> int:
+        """Nombre de tokens actifs (non révoqués)."""
+        return sum(1 for t in self._tokens.values() if not t.get("revoked", False))
+
+    def create(self, *args, **kwargs) -> dict:
+        raise NotImplementedError("VaultTokenStore.create will be implemented in the next step")
+
+    def update(self, *args, **kwargs) -> dict:
+        raise NotImplementedError("VaultTokenStore.update will be implemented in the next step")
+
+    def revoke(self, *args, **kwargs) -> bool:
+        raise NotImplementedError("VaultTokenStore.revoke will be implemented in the next step")
 
 
 # Backward-compatible alias for existing imports/tests.

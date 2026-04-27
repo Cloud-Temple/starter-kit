@@ -99,11 +99,11 @@ def test_vault_backend_requires_application_token(monkeypatch):
         token_store.init_token_store()
 
 
-def test_vault_backend_valid_config_reaches_not_implemented(monkeypatch):
+def test_vault_backend_valid_config_is_accepted(monkeypatch):
     monkeypatch.setenv("TOKEN_STORE_BACKEND", "vault")
     monkeypatch.setenv("MCP_VAULT_ID", "my-vault")
     monkeypatch.setenv("MCP_VAULT_TOKEN", "token-from-env")
     get_settings.cache_clear()
 
-    with pytest.raises(NotImplementedError, match="VaultTokenStore comes next"):
-        token_store.init_token_store()
+    settings = get_settings()
+    assert token_store.validate_vault_settings(settings) == "token-from-env"
