@@ -11,6 +11,21 @@
 > Le boilerplate inclus intègre les **correctifs de sécurité** et les **leçons de production**
 > découverts lors du développement de mcp-office (audit sécurité complet v0.4.2).
 
+
+---
+
+## Documentation opérationnelle
+
+| Besoin | Document |
+|---|---|
+| Créer un nouveau MCP depuis le starter-kit | [`docs/create-new-mcp.md`](docs/create-new-mcp.md) |
+| Déployer un serveur MCP généré | [`docs/server-deployment.md`](docs/server-deployment.md) |
+| Configurer Cline/Cursor ou un client MCP | [`docs/client-setup.md`](docs/client-setup.md) |
+| Comprendre l'owner-based isolation future | [`docs/owner-based-isolation.md`](docs/owner-based-isolation.md) |
+| Comprendre le futur PolicyStore | [`docs/policy-store.md`](docs/policy-store.md) |
+
+Ces guides restent génériques. Les règles métier, prompts et scénarios propres à un MCP concret doivent rester dans le repo du MCP concret.
+
 ---
 
 ## 1. Qu'est-ce qu'un serveur MCP ?
