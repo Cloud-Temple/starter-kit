@@ -17,3 +17,7 @@ httpx>=0.27
 
 # === S3 Token Store (optionnel — si S3_ENDPOINT_URL configuré) ===
 boto3>=1.34
+
+# === JWT / OIDC (optionnel — activé si JWT_ISSUER est configuré) ===
+# RS256/RS512 + ECDSA via le backend cryptography.
+PyJWT[cryptography]>=2.8.0

@@ -92,12 +92,14 @@ class AuthMiddleware:
         Valide un token et retourne ses infos.
 
         Ordre de validation :
-        1. Bootstrap key → admin total
-        2. Token Store S3 (si configuré) → lookup par hash SHA-256
+        1. Bootstrap key → admin total (comparaison constante, anti-timing)
+        2. JWT / OIDC offline (si JWT_ISSUER, JWT_AUDIENCE, JWKS_FILE configurés)
+           → fail-close : un token JWT malformé/expiré ne tombe PAS dans le store S3
+        3. Token Store S3 (si configuré) → lookup par hash SHA-256
         """
         settings = get_settings()
 
-        # Bootstrap key → admin total (comparaison constante contre timing attacks)
+        # 1. Bootstrap key → admin total (comparaison constante contre timing attacks)
         if hmac.compare_digest(token, settings.admin_bootstrap_key):
             return {
                 "client_name": "admin",
@@ -105,7 +107,26 @@ class AuthMiddleware:
                 "allowed_resources": [],
             }
 
-        # Token Store S3 (si configuré)
+        # 2. JWT / OIDC (si les 3 variables de config sont présentes)
+        if settings.jwt_issuer and settings.jwt_audience and settings.jwks_file:
+            from .jwt_validator import validate_jwt, claims_to_token_info
+
+            claims = validate_jwt(
+                token,
+                issuer=settings.jwt_issuer,
+                audience=settings.jwt_audience,
+                jwks_file=settings.jwks_file,
+            )
+            if claims is not None:
+                return claims_to_token_info(claims)
+
+            # Fail-close : si le token ressemble à un JWT (header.payload.signature)
+            # mais que la validation a échoué (expiré, mauvaise sig, etc.),
+            # on refuse immédiatement sans laisser le hash tomber dans le store S3.
+            if token.count(".") == 2:
+                return None
+
+        # 3. Token Store S3 (si configuré)
         store = get_token_store()
         if store:
             token_hash = hashlib.sha256(token.encode()).hexdigest()
