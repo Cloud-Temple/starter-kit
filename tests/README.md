@@ -54,6 +54,31 @@ Covers:
 
 Uses an in-memory fake TokenStore to stay fast and secretless.
 
+### 2bis. Mission JWT middleware tests
+
+File:
+
+```text
+tests/test_auth_mission_jwt_middleware.py
+```
+
+Exercises the real `AuthMissionJWTMiddleware` (mission_token PEP) against fake
+ASGI `scope`/`receive`/`send`. Real EC P-256 keys are generated on the fly and
+real ES256 tokens are signed/tampered with; the JWKS HTTP transport is injected
+(no network) so TTL, ETag/`304`, exponential backoff and fail-close are
+deterministic.
+
+Covers the acceptance tests of `Cloud-Temple/starter-kit#14`:
+
+- malformed / invalid-signature / unknown-kid / `alg=none` / RS256 → `401`
+- valid ES256/P-256 token accepted, claims mapped to `request.scope["mission_context"]`
+- wrong `aud` / `component_id` mismatch → `403`
+- expired / `iat` in the future beyond skew → `401`
+- JWKS cache TTL, ETag revalidation, exponential backoff, fail-close (`503`)
+- `dual-stack` vs `jwt` per-MCP policy; admin JWKS reload endpoint
+
+Secretless: no key material is committed; everything is generated at test time.
+
 ### 3. Docker Compose e2e with MinIO
 
 File:
