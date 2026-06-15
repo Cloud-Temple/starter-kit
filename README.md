@@ -23,6 +23,7 @@
 | Configurer Cline/Cursor ou un client MCP | [`docs/client-setup.md`](docs/client-setup.md) |
 | Comprendre l'owner-based isolation future | [`docs/owner-based-isolation.md`](docs/owner-based-isolation.md) |
 | Comprendre le futur PolicyStore | [`docs/policy-store.md`](docs/policy-store.md) |
+| Valider un `mission_token` mcp-mission (PEP, ES256/JWKS) | [`docs/mission-jwt-middleware.md`](docs/mission-jwt-middleware.md) |
 
 Ces guides restent génériques. Les règles métier, prompts et scénarios propres à un MCP concret doivent rester dans le repo du MCP concret.
 
@@ -92,12 +93,18 @@ LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → AuthMiddlewa
 | **LoggingMiddleware**      | **Toutes** les requêtes             | Log stderr + ring buffer 200 entrées|
 | **AdminMiddleware**        | `/admin`, `/admin/static/*`, `/admin/api/*` | Console admin web SPA     |
 | **HealthCheckMiddleware**  | `/health`, `/healthz`, `/ready`     | JSON direct (sans auth, pour WAF)   |
+| **AuthMissionJWTMiddleware** *(optionnel)* | Requêtes MCP, si `STARTER_KIT_AUTH_MODE != bearer` | Valide le `mission_token` ES256 via JWKS mcp-mission (PEP) |
 | **AuthMiddleware**         | Toutes les requêtes MCP             | Bearer Token → ContextVar           |
 | **FastMCP app**            | MCP Protocol (Streamable HTTP)      | `/mcp` endpoint                     |
 
 > ⚠️ **LoggingMiddleware DOIT être en position outermost** (dernier empilé = premier exécuté).
 > Si placé en innermost, les requêtes admin et health ne sont pas loguées dans le ring buffer
 > d'activité — bug découvert en production sur mcp-office.
+
+> 🔐 **AuthMissionJWTMiddleware** est inséré en amont de l'`AuthMiddleware` legacy
+> uniquement si `STARTER_KIT_AUTH_MODE` vaut `jwt` ou `dual-stack`. Il fait du MCP
+> un PEP (Policy Enforcement Point) validant le `mission_token` émis par mcp-mission.
+> Cf. [`docs/mission-jwt-middleware.md`](docs/mission-jwt-middleware.md).
 
 ```python
 def create_app():

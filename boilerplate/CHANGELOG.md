@@ -8,7 +8,20 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 ## [Unreleased]
 
 ### Added
-- *(vos prochains changements ici)*
+- **`AuthMissionJWTMiddleware`** (`infra/auth_mission_jwt_middleware.py`) —
+  middleware ASGI réutilisable qui fait d'un MCP un PEP (Policy Enforcement Point)
+  validant le `mission_token` ES256 émis par mcp-mission via son JWKS public.
+  - Validation ES256 stricte (`kty=EC`, `crv=P-256`, `alg=ES256`) ; refus de
+    `alg=none` et de toute confusion d'algorithme.
+  - Sélection de clé par `kid` (refus si inconnu/révoqué), `exp` (grâce 0), `iat`
+    anti-skew, `aud` ⊇ `MCP_INSTANCE_ID`, `component_id[<kind>] == MCP_INSTANCE_ID`.
+  - Cache JWKS avec TTL, ETag/`304 Not Modified`, backoff exponentiel + jitter,
+    **fail-close** (HTTP 503) si cache expiré et fetch en échec.
+  - Mapping des claims validés vers `request.scope["mission_context"]`.
+  - Modes `STARTER_KIT_AUTH_MODE=bearer|jwt|dual-stack` (config fail-close au boot).
+  - Endpoint admin `POST /admin/auth/jwks/reload` (réservé admin) pour reload immédiat.
+  - Documentation : `docs/mission-jwt-middleware.md`.
+  - Tests d'acceptation : `tests/test_auth_mission_jwt_middleware.py`.
 
 ---
 
