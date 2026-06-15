@@ -60,6 +60,36 @@ class Settings(BaseSettings):
     jwt_audience: str = ""  # ex: mon-mcp-service
     jwks_file: str = ""     # ex: /app/certs/jwks.json  (chemin absolu dans le container)
 
+    # --- Mission JWT (mcp-mission mission_token, ES256 via JWKS dynamique) ---
+    # Cf. starter-kit#14 + mcp-mission ARCHITECTURE §17.10/§17.12.
+    # AuthMissionJWTMiddleware valide un mission_token signé ES256 émis par
+    # mcp-mission. Activé seulement si STARTER_KIT_AUTH_MODE != "bearer".
+    #
+    # Modes :
+    #   bearer      → middleware inactif (auth Bearer legacy uniquement) — DÉFAUT
+    #   jwt         → SEUL le mission_token JWT est accepté (fail-close, P1/P2 vault/teleport)
+    #   dual-stack  → JWT accepté ; à défaut, fallback Bearer legacy (P3-P7)
+    starter_kit_auth_mode: str = "bearer"
+
+    # Identifiant d'instance unique de CE MCP (ex: "vault-prod-eu-tenant-acme").
+    # Le middleware refuse tout token dont `aud` ne le contient pas (T03/T11).
+    mcp_instance_id: str = ""
+
+    # Genre (kind) de ce MCP dans le claim `component_id` du token
+    # (ex: "vault", "teleport", "live_memory"). Le middleware vérifie
+    # `component_id[<kind>] == MCP_INSTANCE_ID` (détecte les misconfigurations).
+    mcp_component_kind: str = ""
+
+    # URL du JWKS public de mcp-mission (ex:
+    # "https://mcp-mission.internal/.well-known/jwks.json").
+    mcp_mission_jwks_url: str = ""
+
+    # TTL du cache JWKS en secondes (défaut 5 min, cf. §17.10).
+    jwks_cache_ttl_seconds: int = 300
+
+    # Skew toléré sur `iat` (anti-rejeu d'horloge avancée), en secondes.
+    mission_jwt_iat_leeway_seconds: int = 60
+
     # --- Vos services métier (exemples) ---
     # database_url: str = "postgresql://user:pass@db:5432/mydb"
     # redis_url: str = "redis://redis:6379/0"
@@ -94,6 +124,69 @@ class Settings(BaseSettings):
                 f"Configuration JWT incomplète — variables manquantes : {missing}. "
                 f"JWT_ISSUER, JWT_AUDIENCE et JWKS_FILE doivent être toutes définies ou toutes vides."
             )
+
+        # --- Validation Mission JWT (mission_token mcp-mission) ---
+        # Composant de sécurité : on REFUSE de démarrer avec une config
+        # incohérente plutôt que de fail-open silencieusement.
+        valid_modes = {"bearer", "jwt", "dual-stack"}
+        if self.starter_kit_auth_mode not in valid_modes:
+            raise ValueError(
+                f"STARTER_KIT_AUTH_MODE invalide : {self.starter_kit_auth_mode!r}. "
+                f"Valeurs autorisées : {sorted(valid_modes)}."
+            )
+
+        if self.starter_kit_auth_mode != "bearer":
+            # Les variables mission_token deviennent obligatoires : sans elles,
+            # le middleware ne pourrait pas valider `aud`/`component_id` ni
+            # récupérer le JWKS — il fail-open de facto, ce qui est interdit.
+            mission_required = {
+                "MCP_INSTANCE_ID": self.mcp_instance_id,
+                "MCP_COMPONENT_KIND": self.mcp_component_kind,
+                "MCP_MISSION_JWKS_URL": self.mcp_mission_jwks_url,
+            }
+            missing = sorted(k for k, v in mission_required.items() if not v)
+            if missing:
+                raise ValueError(
+                    f"STARTER_KIT_AUTH_MODE={self.starter_kit_auth_mode!r} mais variables "
+                    f"mission_token manquantes : {missing}. "
+                    f"MCP_INSTANCE_ID, MCP_COMPONENT_KIND et MCP_MISSION_JWKS_URL sont "
+                    f"obligatoires en mode 'jwt' ou 'dual-stack' (fail-close)."
+                )
+            # Schéma du JWKS : refus de tout ce qui n'est pas HTTP(S) (anti file://,
+            # data://, etc.). `http://` n'est toléré QUE pour un hôte interne
+            # (loopback / nom Docker court) — sinon MITM/cache-poisoning du JWKS
+            # = acceptation de tokens forgés (T09). HTTPS exigé hors réseau interne.
+            from urllib.parse import urlparse
+
+            parsed = urlparse(self.mcp_mission_jwks_url)
+            if parsed.scheme not in ("http", "https"):
+                raise ValueError(
+                    f"MCP_MISSION_JWKS_URL doit utiliser https:// (ou http:// pour un hôte "
+                    f"interne) — schéma reçu : {parsed.scheme!r}."
+                )
+            if parsed.scheme == "http":
+                host = (parsed.hostname or "").lower()
+                # Loopback explicite, OU nom de service Docker court (un seul
+                # label DNS : ni point — FQDN/IPv4 — ni deux-points — IPv6).
+                # Cette dernière condition exclut les IPv6 routables (ex.
+                # [2001:db8::1]) qui n'ont pas de point mais des deux-points.
+                is_loopback = host in ("localhost", "127.0.0.1", "::1")
+                is_short_service_name = bool(host) and "." not in host and ":" not in host
+                if not (is_loopback or is_short_service_name):
+                    raise ValueError(
+                        "MCP_MISSION_JWKS_URL en http:// n'est autorisé que pour un hôte "
+                        f"interne (loopback ou nom de service court) — hôte reçu : {host!r}. "
+                        "Utilisez https:// pour un hôte routable (anti MITM du JWKS, T09)."
+                    )
+            if self.jwks_cache_ttl_seconds <= 0:
+                raise ValueError(
+                    f"JWKS_CACHE_TTL_SECONDS doit être > 0 (valeur : {self.jwks_cache_ttl_seconds})."
+                )
+            if self.mission_jwt_iat_leeway_seconds < 0:
+                raise ValueError(
+                    "MISSION_JWT_IAT_LEEWAY_SECONDS doit être >= 0 "
+                    f"(valeur : {self.mission_jwt_iat_leeway_seconds})."
+                )
 
         return self
 

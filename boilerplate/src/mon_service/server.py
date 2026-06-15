@@ -258,6 +258,9 @@ def create_app():
 
     L'AdminMiddleware intercepte /admin, /admin/static/*, /admin/api/*
     Le HealthCheckMiddleware intercepte /health, /healthz, /ready
+    L'AuthMissionJWTMiddleware (si STARTER_KIT_AUTH_MODE != "bearer") valide le
+        mission_token JWT ES256 via le JWKS de mcp-mission (PEP), en amont du
+        Bearer legacy (cf. mcp-mission ARCHITECTURE §17.12)
     L'AuthMiddleware valide le Bearer token et injecte dans ContextVar
     Le FastMCP gère le protocole MCP (Streamable HTTP)
     """
@@ -269,6 +272,14 @@ def create_app():
 
     # Empiler les middlewares (dernier ajouté = premier exécuté)
     app = AuthMiddleware(app)                   # Auth Bearer + ContextVar
+
+    # Mission JWT (PEP) — inséré EN AMONT du Bearer legacy, seulement si activé.
+    # En mode "jwt" il refuse le Bearer legacy ; en "dual-stack" il laisse
+    # passer le Bearer legacy au middleware suivant si aucun JWT n'est présenté.
+    if settings.starter_kit_auth_mode != "bearer":
+        from .infra.auth_mission_jwt_middleware import AuthMissionJWTMiddleware
+        app = AuthMissionJWTMiddleware(app, settings=settings)
+
     app = HealthCheckMiddleware(app)            # /health, /healthz, /ready
     app = AdminMiddleware(app, mcp)             # /admin
     app = LoggingMiddleware(app)                # Logging + ring buffer (outermost)
