@@ -20,7 +20,7 @@ docker compose up -d
 
 # Vérification
 curl http://localhost:8082/health
-# → {"status":"healthy","service":"mon-mcp-service","version":"1.0.0"}
+# → {"status":"healthy","service":"mon-mcp-service","version":"1.2.0"}
 
 # Console d'administration (logo Cloud Temple + sidebar)
 open http://localhost:8082/admin
@@ -60,7 +60,7 @@ python -m src.mon_service
 
 ## Architecture
 
-Ce service suit le pattern **3 couches + 5 middlewares** Cloud Temple.
+Ce service suit le pattern **3 couches + middlewares ASGI** Cloud Temple.
 Voir [DESIGN/ARCHITECTURE.md](DESIGN/ARCHITECTURE.md) pour les détails.
 
 ### 3 couches d'interface
@@ -72,10 +72,10 @@ Voir [DESIGN/ARCHITECTURE.md](DESIGN/ARCHITECTURE.md) pour les détails.
 | Shell interactif | `scripts/cli/shell.py`        | Interface interactive              |
 | Affichage        | `scripts/cli/display.py`      | Rich partagé (couches 2+3)         |
 
-### 5 middlewares ASGI
+### Middlewares ASGI
 
 ```
-LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → AuthMiddleware → FastMCP
+LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → [AuthMissionJWTMiddleware] → AuthMiddleware → FastMCP
 ```
 
 | Middleware              | Rôle                                         |
@@ -83,7 +83,8 @@ LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → AuthMiddlewa
 | LoggingMiddleware       | Log stderr + ring buffer 200 entrées (outer) |
 | AdminMiddleware         | Console admin web `/admin` (SPA + API REST)  |
 | HealthCheckMiddleware   | `/health`, `/healthz`, `/ready` (sans auth)  |
-| AuthMiddleware          | Bearer Token → ContextVar (request-scoped)   |
+| AuthMissionJWTMiddleware *(optionnel)* | `mission_token` ES256/JWKS mcp-mission |
+| AuthMiddleware          | Bearer/JWT → ContextVars (request-scoped)    |
 | FastMCP                 | Protocole MCP (Streamable HTTP)              |
 
 ### Infrastructure
@@ -107,8 +108,10 @@ boilerplate/
 │   │   └── api.py             # REST API (health, tokens CRUD, logs)
 │   ├── auth/
 │   │   ├── middleware.py      # AuthMiddleware + LoggingMiddleware
-│   │   ├── context.py         # check_access(), ContextVar
+│   │   ├── context.py         # check_access(), ContextVars legacy + mission
 │   │   └── token_store.py     # Token Store S3 + cache TTL 5min
+│   ├── infra/
+│   │   └── auth_mission_jwt_middleware.py # PEP mission_token ES256/JWKS
 │   └── static/                # Console admin web
 │       ├── admin.html         # SPA HTML (login + sidebar)
 │       ├── css/
@@ -133,7 +136,8 @@ boilerplate/
 │   ├── Dockerfile             # Caddy + Coraza
 │   └── Caddyfile              # OWASP CRS + HSTS + rate limiting
 ├── DESIGN/
-│   └── ARCHITECTURE.md        # Schémas + décisions architecturales
+│   ├── ARCHITECTURE.md        # Schémas + décisions architecturales
+│   └── AGENTIC_RULES/         # Règles agentiques à adapter au projet
 ├── CHANGELOG.md               # Historique des versions
 ├── Dockerfile
 ├── docker-compose.yml
@@ -153,6 +157,10 @@ boilerplate/
 | `MCP_SERVER_PORT`      | Port d'écoute (interne)            | `8002`                    |
 | `WAF_PORT`             | Port WAF (externe)                 | `8082`                    |
 | `ADMIN_BOOTSTRAP_KEY`  | Token admin (⚠️ changer !)        | `change_me_in_production` |
+| `STARTER_KIT_AUTH_MODE` | Mode auth MCP (`bearer`, `jwt`, `dual-stack`) | `bearer` |
+| `MCP_INSTANCE_ID`      | Audience/instance attendue dans le `mission_token` | (vide) |
+| `MCP_COMPONENT_KIND`   | Clé `component_id` attendue (`vault`, `teleport`, etc.) | (vide) |
+| `MCP_MISSION_JWKS_URL` | URL JWKS public mcp-mission       | (vide) |
 | `S3_ENDPOINT_URL`      | Endpoint S3 (optionnel)            | (vide)                    |
 | `S3_ACCESS_KEY_ID`     | Clé d'accès S3                     | (vide)                    |
 | `S3_SECRET_ACCESS_KEY` | Secret S3                          | (vide)                    |
@@ -191,6 +199,36 @@ Pour chaque outil, modifier **4 fichiers** :
 4. **`shell.py`** — Handler `cmd_mon_outil()` + dispatch + autocomplétion
 
 Voir le guide complet : [Starter Kit MCP Cloud Temple](../README.md)
+
+---
+
+## Règles agentiques du projet
+
+Le dossier [`DESIGN/AGENTIC_RULES/`](DESIGN/AGENTIC_RULES/) contient des
+templates de règles pour les agents IA qui travailleront dans ce projet une fois
+le boilerplate copié.
+
+| Fichier | À adapter pour le projet |
+| ------- | ------------------------ |
+| `WORKSPACE_CLINE_ADVANCE_RULES.md` | Live Memory, Graph Memory, identifiants `SPACE` / `GRAPH_MEMORY_ID`, protocole de consolidation |
+| `WORKFLOW_ENGINEERING.md` | Reviewer indépendant, cycle adversarial, tests RED/GREEN non complaisants |
+| `WORKFLOW_GIT.md` | Branches, issues, PR, liens GitHub, règles de merge |
+| `WORKFLOW_GIT_EPIC.md` | EPIC, RC flow, statuts Project, gates humains |
+
+Le modèle mémoire sépare :
+
+- **Live Memory** : contexte court de session, notes atomiques, consolidation.
+- **Graph Memory** : index sémantique durable des documents canoniques.
+- **Repository files** : source finale de vérité.
+
+Références Cloud Temple :
+
+- [Cloud-Temple/live-memory](https://github.com/Cloud-Temple/live-memory)
+- [Cloud-Temple/graph-memory](https://github.com/Cloud-Temple/graph-memory)
+
+Avant de rendre ces règles obligatoires, remplacer les placeholders du template
+par les valeurs du projet. Ne jamais versionner de token, endpoint sensible ou
+secret MCP dans ces fichiers.
 
 ---
 

@@ -5,7 +5,7 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ---
 
-## [Unreleased]
+## [1.2.0] — 2026-06-21
 
 ### Added
 - **`AuthMissionJWTMiddleware`** (`infra/auth_mission_jwt_middleware.py`) —
@@ -17,11 +17,57 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
     anti-skew, `aud` ⊇ `MCP_INSTANCE_ID`, `component_id[<kind>] == MCP_INSTANCE_ID`.
   - Cache JWKS avec TTL, ETag/`304 Not Modified`, backoff exponentiel + jitter,
     **fail-close** (HTTP 503) si cache expiré et fetch en échec.
-  - Mapping des claims validés vers `request.scope["mission_context"]`.
+  - Claims obligatoires : `mission_id`, `jti`, `scope` en plus de `iss`, `aud`,
+    `iat`, `exp`.
+  - Mapping des claims validés vers `request.scope["mission_context"]`,
+    `current_mission_context` et une identité `current_token_info`
+    `auth_type=mission_token` compatible avec les helpers existants.
+    Le `scope` mission est exposé comme `mission_scope`, pas converti en
+    `allowed_resources` legacy.
   - Modes `STARTER_KIT_AUTH_MODE=bearer|jwt|dual-stack` (config fail-close au boot).
   - Endpoint admin `POST /admin/auth/jwks/reload` (réservé admin) pour reload immédiat.
   - Documentation : `docs/mission-jwt-middleware.md`.
   - Tests d'acceptation : `tests/test_auth_mission_jwt_middleware.py`.
+- **Règles agentiques projet** (`DESIGN/AGENTIC_RULES/`) :
+  - bootstrap Live Memory + Graph Memory pour les projets dérivés ;
+  - discipline engineering avec reviewer adversarial et tests RED/GREEN ;
+  - workflow GitHub issues/PR et workflow EPIC/RC ;
+  - gates humains pour merge, release et opérations irréversibles.
+- Documentation README reliant ces templates aux dépôts Cloud Temple
+  `live-memory` et `graph-memory`.
+
+### Fixed
+- Correction de l'intégration ASGI complète : un `mission_token` validé ne laisse
+  plus les outils MCP avec `current_token_info=None` après passage dans
+  `AuthMiddleware`.
+- Alignement du contrat d'acceptation : absence ou mauvais type de `jti`/`scope`
+  refusé en fail-close (`401`).
+- `check_access(resource_id)` échoue en fail-close pour `mission_token` tant
+  qu'aucune policy locale ne mappe explicitement la ressource.
+- `check_write_permission()` échoue également en fail-close pour `mission_token` ;
+  le `scope` mission n'est pas traité comme permission `write` legacy.
+
+---
+
+## [1.1.0] — 2026-06-15
+
+### Added
+- Backend `VaultTokenStore` optionnel (`TOKEN_STORE_BACKEND=vault`) avec tests
+  mock HTTP, fake serveur local et configuration fail-close.
+- Configuration proxy HTTP sortant (`PROXY_URL`) sans pollution globale de
+  l'environnement process.
+- Validation JWT/OIDC offline via fichier JWKS local.
+- Runbooks opérationnels racine : création de MCP, déploiement serveur,
+  configuration client, owner-based isolation future et PolicyStore futur.
+
+### Changed
+- Compatibilité Cloud Temple / Dell ECS S3 par défaut :
+  `S3_SIGNATURE_VERSION=s3`, `S3_ADDRESSING_STYLE=path`.
+- API admin tokens alignée avec `policy_id`, update/revoke et health non sensible.
+
+### Fixed
+- Warning `ADMIN_BOOTSTRAP_KEY` aligné sur la valeur `.env.example`.
+- Correction de la persistance S3 SigV2/path-style pour les opérations objet.
 
 ---
 

@@ -12,7 +12,7 @@ import hmac
 import hashlib
 import collections
 from typing import Optional
-from .context import current_token_info
+from .context import current_mission_context, current_token_info, mission_context_to_token_info
 from .token_store import get_token_store
 from ..config import get_settings
 
@@ -62,18 +62,24 @@ class AuthMiddleware:
         if path in self.PUBLIC_PATHS:
             return await self.app(scope, receive, send)
 
-        # Extraire le Bearer token
-        token = self._extract_token(scope)
+        mission_context = scope.get("mission_context")
         token_info = None
+        settings = get_settings()
 
-        if token:
-            token_info = self._validate_token(token)
+        if isinstance(mission_context, dict):
+            token_info = mission_context_to_token_info(mission_context)
+        elif settings.starter_kit_auth_mode != "jwt":
+            token = self._extract_token(scope)
+            if token:
+                token_info = self._validate_token(token)
 
         # Injecter dans le contextvar (même si None → les outils vérifieront)
         tok = current_token_info.set(token_info)
+        mission_tok = current_mission_context.set(mission_context if isinstance(mission_context, dict) else None)
         try:
             await self.app(scope, receive, send)
         finally:
+            current_mission_context.reset(mission_tok)
             current_token_info.reset(tok)
 
     def _extract_token(self, scope) -> Optional[str]:

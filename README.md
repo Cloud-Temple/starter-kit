@@ -24,6 +24,7 @@
 | Comprendre l'owner-based isolation future | [`docs/owner-based-isolation.md`](docs/owner-based-isolation.md) |
 | Comprendre le futur PolicyStore | [`docs/policy-store.md`](docs/policy-store.md) |
 | Valider un `mission_token` mcp-mission (PEP, ES256/JWKS) | [`docs/mission-jwt-middleware.md`](docs/mission-jwt-middleware.md) |
+| Installer les règles agentiques d'un projet dérivé | [`boilerplate/DESIGN/AGENTIC_RULES/`](boilerplate/DESIGN/AGENTIC_RULES/) |
 
 Ces guides restent génériques. Les règles métier, prompts et scénarios propres à un MCP concret doivent rester dans le repo du MCP concret.
 
@@ -44,7 +45,7 @@ Un serveur MCP Cloud Temple :
 ### Pourquoi ce starter-kit ?
 Chaque serveur MCP Cloud Temple suit le **même pattern architectural** :
 - **3 couches** d'interface (API MCP + CLI scriptable + shell interactif)
-- **5 middlewares ASGI** (Admin, HealthCheck, Auth, Logging, FastMCP)
+- **Pile middleware ASGI** de base, avec un PEP mission_token optionnel
 - **Mêmes conventions** (format retour, auth ContextVar, nommage, logs)
 - **Mêmes outils** (FastMCP, Click, prompt_toolkit, Rich)
 - **Même infra** (Docker, WAF Caddy+Coraza, S3 Token Store)
@@ -54,7 +55,7 @@ au lieu de quelques jours.
 
 ---
 
-## 2. Architecture — La règle des 3 couches + 5 middlewares
+## 2. Architecture — La règle des 3 couches + middlewares ASGI
 
 ### 2.1 Les 3 couches d'interface
 
@@ -80,12 +81,12 @@ au lieu de quelques jours.
 └─────────────────────────────────────────────────────┘
 ```
 
-### 2.2 La pile de 5 middlewares ASGI
+### 2.2 La pile de middlewares ASGI
 
-Chaque serveur MCP Cloud Temple assemble **5 couches middleware** dans `create_app()` :
+Chaque serveur MCP Cloud Temple assemble les couches middleware dans `create_app()` :
 
 ```
-LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → AuthMiddleware → FastMCP
+LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → [AuthMissionJWTMiddleware] → AuthMiddleware → FastMCP
 ```
 
 | Couche (ext → int)         | Intercepte                          | Rôle                                |
@@ -94,7 +95,7 @@ LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → AuthMiddlewa
 | **AdminMiddleware**        | `/admin`, `/admin/static/*`, `/admin/api/*` | Console admin web SPA     |
 | **HealthCheckMiddleware**  | `/health`, `/healthz`, `/ready`     | JSON direct (sans auth, pour WAF)   |
 | **AuthMissionJWTMiddleware** *(optionnel)* | Requêtes MCP, si `STARTER_KIT_AUTH_MODE != bearer` | Valide le `mission_token` ES256 via JWKS mcp-mission (PEP) |
-| **AuthMiddleware**         | Toutes les requêtes MCP             | Bearer Token → ContextVar           |
+| **AuthMiddleware**         | Toutes les requêtes MCP             | Bearer/JWT → ContextVars            |
 | **FastMCP app**            | MCP Protocol (Streamable HTTP)      | `/mcp` endpoint                     |
 
 > ⚠️ **LoggingMiddleware DOIT être en position outermost** (dernier empilé = premier exécuté).
@@ -112,7 +113,10 @@ def create_app():
     from .admin.middleware import AdminMiddleware
 
     app = mcp.streamable_http_app()       # FastMCP (innermost)
-    app = AuthMiddleware(app)             # Auth Bearer + ContextVar
+    app = AuthMiddleware(app)             # Auth Bearer/JWT + ContextVars
+    if settings.starter_kit_auth_mode != "bearer":
+        from .infra.auth_mission_jwt_middleware import AuthMissionJWTMiddleware
+        app = AuthMissionJWTMiddleware(app, settings=settings)
     app = HealthCheckMiddleware(app)       # /health, /healthz, /ready
     app = AdminMiddleware(app, mcp)        # /admin
     app = LoggingMiddleware(app)           # Logging (outermost !)
@@ -153,7 +157,7 @@ Design Cloud Temple : dark theme `#0f0f23`, accent teal `#41a890`.
 | Shell interactif | `prompt_toolkit`        | Autocomplétion, historique          |
 | Affichage        | `Rich`                  | Tables, panels, couleurs, Markdown  |
 | Communication    | `httpx`                 | Client HTTP vers le serveur         |
-| Auth             | Bearer Token + ContextVar | Authentification request-scoped   |
+| Auth             | Bearer Token + mission_token ContextVars | Authentification request-scoped |
 | Token Store      | S3 + cache TTL 5min     | Persistance tokens (optionnel)      |
 | Console admin    | SPA HTML/JS             | Interface web d'administration      |
 | Conteneur        | Docker + Docker Compose | Déploiement                         |
@@ -178,8 +182,10 @@ mon-mcp-server/
 │       ├── auth/               # ← Auth + Token Store
 │       │   ├── __init__.py
 │       │   ├── middleware.py   # AuthMiddleware (Bearer + ContextVar) + LoggingMiddleware (ring buffer)
-│       │   ├── context.py      # check_access, check_write_permission via ContextVar
+│       │   ├── context.py      # check_access, check_write_permission via ContextVars
 │       │   └── token_store.py  # Token Store S3 + cache mémoire TTL 5min
+│       ├── infra/
+│       │   └── auth_mission_jwt_middleware.py # PEP mission_token ES256/JWKS
 │       ├── static/             # ← Fichiers statiques admin (SPA)
 │       │   └── admin.html      # SPA HTML (login + Dashboard + Tokens + Activité)
 │       └── core/               # ← Vos services métier
@@ -270,7 +276,10 @@ return {"status": "not_found", ...}
 
 ### 5.3 Authentification via ContextVar
 
-L'AuthMiddleware injecte les infos du token dans un `contextvars.ContextVar` :
+L'AuthMiddleware injecte les infos d'authentification dans des `contextvars.ContextVar`.
+Il supporte le Bearer legacy et, si `AuthMissionJWTMiddleware` a validé un
+`mission_token`, il expose aussi `current_mission_context` et une identité
+`current_token_info` avec `auth_type=mission_token` :
 
 ```python
 @mcp.tool()
@@ -650,6 +659,8 @@ boilerplate/
 │   │   ├── middleware.py    # AuthMiddleware (Bearer + ContextVar) + LoggingMiddleware (ring buffer)
 │   │   ├── context.py       # check_access, check_write_permission, get_current_client_name, is_admin
 │   │   └── token_store.py   # Token Store S3 + cache TTL 5min (create/list/revoke/update)
+│   ├── infra/
+│   │   └── auth_mission_jwt_middleware.py # PEP mission_token ES256/JWKS
 │   └── static/              # Console admin web (SPA)
 │       ├── admin.html       # HTML structuré (login + sidebar + modals)
 │       ├── css/
@@ -675,14 +686,15 @@ boilerplate/
 │   ├── Dockerfile           # Caddy + Coraza WAF + Rate Limiting
 │   └── Caddyfile            # Config WAF : reverse proxy + OWASP CRS + HSTS
 ├── DESIGN/
-│   └── ARCHITECTURE.md      # Schéma architecture + décisions + sécurité
+│   ├── ARCHITECTURE.md      # Schéma architecture + décisions + sécurité
+│   └── AGENTIC_RULES/       # Templates de règles pour agents IA du projet dérivé
 ├── CHANGELOG.md             # Historique des versions (format SemVer)
 ├── Dockerfile               # Python 3.11, utilisateur non-root
 ├── docker-compose.yml       # WAF (port 8082) → MCP (port 8002, interne)
 ├── requirements.txt         # mcp, uvicorn, boto3, click, rich, httpx
 ├── .env.example             # Variables d'environnement documentées
 ├── .gitignore               # Python, IDE, OS, secrets
-├── VERSION                  # 0.1.0
+├── VERSION                  # 1.2.0
 └── README.md                # Guide de démarrage rapide
 ```
 
@@ -690,13 +702,45 @@ boilerplate/
 1. Copier le dossier `boilerplate/` dans un nouveau repo
 2. Renommer `mon_service` → votre nom de service
 3. Adapter `config.py` avec vos variables d'environnement
-4. Ajouter vos services métier dans `src/mon_service/core/`
-5. Ajouter vos outils MCP dans `server.py`
-6. Pour chaque outil : compléter display.py → commands.py → shell.py
+4. Adapter `DESIGN/AGENTIC_RULES/` avec les identifiants mémoire et le workflow du projet
+5. Ajouter vos services métier dans `src/mon_service/core/`
+6. Ajouter vos outils MCP dans `server.py`
+7. Pour chaque outil : compléter display.py → commands.py → shell.py
 
 ---
 
-## 11. Configurer dans Cline (VS Code / VSCodium)
+## 11. Règles agentiques pour projets dérivés
+
+Le dossier [`boilerplate/DESIGN/AGENTIC_RULES/`](boilerplate/DESIGN/AGENTIC_RULES/)
+livre des templates à copier dans chaque projet créé depuis le starter-kit.
+Ces fichiers ne sont pas les règles de maintenance du starter-kit lui-même :
+ils définissent le cadre que le nouveau projet donne à ses agents IA.
+
+| Fichier | Rôle |
+| ------- | ---- |
+| `WORKSPACE_CLINE_ADVANCE_RULES.md` | Bootstrap mémoire avec Live Memory, recherche Graph Memory, hygiène de consolidation |
+| `WORKFLOW_ENGINEERING.md` | Cycle engineering : plan, implémentation, review adversariale, tests non complaisants |
+| `WORKFLOW_GIT.md` | Branches, issues, PR, liens `Closes #N`, séparation issue/PR |
+| `WORKFLOW_GIT_EPIC.md` | Pilotage EPIC, RC flow, statuts Project, gates humains |
+
+Le template avancé sépare explicitement trois sources de vérité :
+
+- **Live Memory** : contexte court de session et notes consolidables.
+- **Graph Memory** : index sémantique durable pour retrouver les documents canoniques.
+- **Fichiers du repo** : vérité finale pour les décisions, runbooks, RFC et code.
+
+Références Cloud Temple :
+
+- [Cloud-Temple/live-memory](https://github.com/Cloud-Temple/live-memory)
+- [Cloud-Temple/graph-memory](https://github.com/Cloud-Temple/graph-memory)
+
+Chaque projet dérivé doit renseigner ses valeurs `SPACE`, `LIVE_MCP_SERVER`,
+`GRAPH_MCP_SERVER` et `GRAPH_MEMORY_ID` avant de rendre ces règles obligatoires.
+Ne jamais stocker de token, endpoint sensible ou secret dans ces fichiers.
+
+---
+
+## 12. Configurer dans Cline (VS Code / VSCodium)
 
 Une fois votre serveur MCP lancé, connectez-le à **Cline** pour que l'agent IA
 puisse utiliser vos outils. Voir le guide complet : **[CLINE_SETUP.md](CLINE_SETUP.md)**
@@ -723,7 +767,7 @@ puisse utiliser vos outils. Voir le guide complet : **[CLINE_SETUP.md](CLINE_SET
 
 ---
 
-## 12. Exemples de référence
+## 13. Exemples de référence
 
 | Projet | Outils | Innovations clés |
 | ------ | ------ | ---------------- |

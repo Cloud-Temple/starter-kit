@@ -1,5 +1,57 @@
 # Changelog
 
+## v1.2.0 — 2026-06-21 — Mission token PEP baseline
+
+This release adds the reusable `AuthMissionJWTMiddleware` for mcp-mission
+`mission_token` validation and closes the integration gap with the starter-kit
+auth context.
+
+---
+
+## Added
+
+- Optional `AuthMissionJWTMiddleware` in the ASGI stack when
+  `STARTER_KIT_AUTH_MODE=jwt|dual-stack`.
+- ES256/P-256 `mission_token` validation via dynamic mcp-mission JWKS.
+- JWKS cache with TTL, ETag/304 revalidation, exponential backoff, and
+  fail-close behavior when the cache is expired and the JWKS cannot be fetched.
+- Admin endpoint `POST /admin/auth/jwks/reload` for immediate JWKS refresh.
+- Agentic project-rule templates under `boilerplate/DESIGN/AGENTIC_RULES/`,
+  covering Live Memory, Graph Memory, adversarial engineering reviews, GitHub
+  issue/PR workflow, EPIC/RC flow, and human gates for generated projects.
+- Mission authentication context:
+  - `request.scope["mission_context"]`,
+  - `current_mission_context`,
+  - `current_token_info` bridge with `auth_type=mission_token`.
+- Documentation for mission-token operation, ASGI integration, and how generated
+  projects should connect their agent rules to Cloud Temple Live Memory and
+  Graph Memory.
+
+---
+
+## Fixed
+
+- Mission tokens validated by `AuthMissionJWTMiddleware` now reach existing MCP
+  tools as an authenticated request instead of leaving `current_token_info=None`
+  after passing through `AuthMiddleware`.
+- `jti` and `scope` are now required and type-checked, aligning the implementation
+  with the acceptance contract from Cloud-Temple/starter-kit#14.
+
+---
+
+## Security
+
+- `mission_token` identities never receive `admin` permission through the
+  compatibility bridge, and `scope` is exposed as `mission_scope` rather than
+  converted into legacy `allowed_resources`.
+- Resource-level `check_access(resource_id)` fails closed for `mission_token`
+  identities unless a local policy explicitly maps the resource.
+- `check_write_permission()` also fails closed for `mission_token`; mission
+  `scope` is not treated as a legacy write permission.
+- Invalid, missing, or malformed `jti` / `scope` claims fail closed with `401`.
+
+---
+
 ## v1.1.0 — Starter-kit industrialization baseline
 
 This release consolidates the Cloud Temple MCP starter-kit after the v1.0.0 baseline.

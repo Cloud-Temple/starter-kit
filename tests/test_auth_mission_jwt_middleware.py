@@ -37,7 +37,9 @@ import jwt as pyjwt  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 
-from mon_service.config import Settings  # noqa: E402
+from mon_service.config import Settings, get_settings  # noqa: E402
+from mon_service.auth.context import check_access, check_write_permission, current_mission_context, current_token_info  # noqa: E402
+from mon_service.auth.middleware import AuthMiddleware  # noqa: E402
 from mon_service.infra.auth_mission_jwt_middleware import (  # noqa: E402
     AuthMissionJWTMiddleware,
     JWKSCache,
@@ -207,8 +209,43 @@ async def _run(middleware, scope) -> Captured:
     return cap
 
 
+async def _run_stack(app, scope):
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    await app(scope, receive, send)
+    return sent
+
+
 def _body_json(cap: Captured) -> dict:
     return json.loads(cap.body.decode()) if cap.body else {}
+
+
+class ContextCaptureApp:
+    """Downstream ASGI app that observes auth ContextVars as tools would."""
+
+    def __init__(self):
+        self.scope_seen = None
+        self.token_info_seen = None
+        self.mission_context_seen = None
+        self.access_error_seen = None
+        self.empty_access_error_seen = None
+        self.write_error_seen = None
+
+    async def __call__(self, scope, receive, send):
+        self.scope_seen = scope
+        self.token_info_seen = current_token_info.get()
+        self.mission_context_seen = current_mission_context.get()
+        self.access_error_seen = check_access("resource-a")
+        self.empty_access_error_seen = check_access("")
+        self.write_error_seen = check_write_permission()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
 
 
 # =============================================================================
@@ -696,6 +733,132 @@ def test_validate_forbidden_on_audience():
             component_kind=COMPONENT_KIND,
             iat_leeway=60,
         )
+
+
+def test_validate_requires_jti():
+    priv, pub = _new_ec_keypair()
+    cache = JWKSCache(JWKS_URL, 300, fetch=FakeHTTP([_ok_200(_jwks_body(_jwk_with("k1", pub)))]))
+    claims = _base_claims()
+    claims.pop("jti")
+
+    with pytest.raises(MissionTokenInvalid):
+        validate_mission_token(
+            _make_token(priv, "k1", claims=claims),
+            cache,
+            instance_id=INSTANCE_ID,
+            component_kind=COMPONENT_KIND,
+            iat_leeway=60,
+        )
+
+
+def test_validate_rejects_non_string_jti():
+    priv, pub = _new_ec_keypair()
+    cache = JWKSCache(JWKS_URL, 300, fetch=FakeHTTP([_ok_200(_jwks_body(_jwk_with("k1", pub)))]))
+
+    with pytest.raises(MissionTokenInvalid):
+        validate_mission_token(
+            _make_token(priv, "k1", claims=_base_claims(jti=12345)),
+            cache,
+            instance_id=INSTANCE_ID,
+            component_kind=COMPONENT_KIND,
+            iat_leeway=60,
+        )
+
+
+def test_validate_requires_scope():
+    priv, pub = _new_ec_keypair()
+    cache = JWKSCache(JWKS_URL, 300, fetch=FakeHTTP([_ok_200(_jwks_body(_jwk_with("k1", pub)))]))
+    claims = _base_claims()
+    claims.pop("scope")
+
+    with pytest.raises(MissionTokenInvalid):
+        validate_mission_token(
+            _make_token(priv, "k1", claims=claims),
+            cache,
+            instance_id=INSTANCE_ID,
+            component_kind=COMPONENT_KIND,
+            iat_leeway=60,
+        )
+
+
+@pytest.mark.parametrize("bad_scope", ["not-a-list", [], [123], [""]])
+def test_validate_rejects_malformed_scope(bad_scope):
+    priv, pub = _new_ec_keypair()
+    cache = JWKSCache(JWKS_URL, 300, fetch=FakeHTTP([_ok_200(_jwks_body(_jwk_with("k1", pub)))]))
+
+    with pytest.raises(MissionTokenInvalid):
+        validate_mission_token(
+            _make_token(priv, "k1", claims=_base_claims(scope=bad_scope)),
+            cache,
+            instance_id=INSTANCE_ID,
+            component_kind=COMPONENT_KIND,
+            iat_leeway=60,
+        )
+
+
+def test_validate_rejects_non_string_mission_id():
+    priv, pub = _new_ec_keypair()
+    cache = JWKSCache(JWKS_URL, 300, fetch=FakeHTTP([_ok_200(_jwks_body(_jwk_with("k1", pub)))]))
+
+    with pytest.raises(MissionTokenInvalid):
+        validate_mission_token(
+            _make_token(priv, "k1", claims=_base_claims(mission_id=12345)),
+            cache,
+            instance_id=INSTANCE_ID,
+            component_kind=COMPONENT_KIND,
+            iat_leeway=60,
+        )
+
+
+@pytest.mark.asyncio
+async def test_valid_mission_token_populates_auth_contextvars_in_full_stack():
+    priv, pub = _new_ec_keypair()
+    token = _make_token(priv, "k1", claims=_base_claims())
+    cache = JWKSCache(JWKS_URL, 300, fetch=FakeHTTP([_ok_200(_jwks_body(_jwk_with("k1", pub)))]))
+
+    cap = ContextCaptureApp()
+    app = AuthMissionJWTMiddleware(
+        AuthMiddleware(cap),
+        settings=_settings(starter_kit_auth_mode="jwt"),
+        jwks_cache=cache,
+    )
+
+    sent = await _run_stack(app, _scope(token))
+
+    assert sent[0]["status"] == 200
+    assert cap.scope_seen["mission_context"]["mission_id"] == "mis_a3f8b2c1"
+    assert cap.mission_context_seen["mission_id"] == "mis_a3f8b2c1"
+    assert cap.token_info_seen["auth_type"] == "mission_token"
+    assert cap.token_info_seen["client_name"] == "mission:mis_a3f8b2c1"
+    assert "admin" not in cap.token_info_seen["permissions"]
+    assert cap.token_info_seen["allowed_resources"] == []
+    assert cap.token_info_seen["mission_scope"] == [f"{INSTANCE_ID}:mission/mis_a3f8b2c1:*"]
+    assert cap.access_error_seen["status"] == "error"
+    assert "mission_token validé" in cap.access_error_seen["message"]
+    assert cap.empty_access_error_seen["status"] == "error"
+    assert cap.write_error_seen["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_auth_middleware_in_jwt_mode_does_not_accept_legacy_bearer(monkeypatch):
+    monkeypatch.setenv("STARTER_KIT_AUTH_MODE", "jwt")
+    monkeypatch.setenv("MCP_INSTANCE_ID", INSTANCE_ID)
+    monkeypatch.setenv("MCP_COMPONENT_KIND", COMPONENT_KIND)
+    monkeypatch.setenv("MCP_MISSION_JWKS_URL", JWKS_URL)
+    get_settings.cache_clear()
+
+    cap = ContextCaptureApp()
+    app = AuthMiddleware(cap)
+    try:
+        sent = await _run_stack(app, _scope("test-bootstrap-key"))
+    finally:
+        get_settings.cache_clear()
+
+    assert sent[0]["status"] == 200
+    assert cap.token_info_seen is None
+    assert cap.mission_context_seen is None
+    assert cap.access_error_seen["status"] == "error"
+    assert cap.write_error_seen["status"] == "error"
 
 
 def test_jwks_parse_ignores_non_es256_keys():

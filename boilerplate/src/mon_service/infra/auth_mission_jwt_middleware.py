@@ -15,8 +15,8 @@ Garanties de sécurité (fail-CLOSE par défaut) :
   algorithme est refusé (anti `alg=none`, anti confusion d'algo RS↔ES).
 - Sélection de clé par `kid` : un `kid` inconnu/révoqué (absent du JWKS) → refus.
 - Vérification `exp` (grâce 0 côté PEP — le refresh est géré côté agent),
-  `iat` anti-skew, `aud` contient `MCP_INSTANCE_ID`,
-  `component_id[<kind>] == MCP_INSTANCE_ID`.
+  `iat` anti-skew, `mission_id`, `jti`, `scope`, `aud` contient
+  `MCP_INSTANCE_ID`, `component_id[<kind>] == MCP_INSTANCE_ID`.
 - JWKS récupéré dynamiquement avec **cache TTL**, support **ETag/`304 Not
   Modified`**, **backoff exponentiel** + jitter en cas d'échec de fetch.
 - **Fail-close** : si le cache est expiré ET le fetch JWKS échoue → HTTP 503
@@ -388,8 +388,9 @@ def validate_mission_token(
       2. Sélection de la clé publique via `kid` (JWKS, refus si inconnu).
       3. Vérification de la signature ES256 + `exp` (grâce 0).
       4. Vérification `iat <= now + leeway` (anti-skew d'horloge avancée).
-      5. `aud` contient `instance_id` (refus 403 sinon).
-      6. `component_id[component_kind] == instance_id` (refus 403 sinon).
+      5. Vérification `mission_id`, `jti`, `scope`.
+      6. `aud` contient `instance_id` (refus 403 sinon).
+      7. `component_id[component_kind] == instance_id` (refus 403 sinon).
 
     Raises:
         MissionTokenInvalid   : token absent/malformé/signature/exp/iat/iss/kid.
@@ -438,7 +439,7 @@ def validate_mission_token(
                 "verify_exp": True,
                 "verify_iat": False,   # vérifié manuellement (anti-skew futur)
                 "verify_aud": False,   # vérifié manuellement (403 distinct)
-                "require": ["exp", "iat", "iss", "aud", "mission_id"],
+                "require": ["exp", "iat", "iss", "aud", "mission_id", "jti", "scope"],
             },
             leeway=0,  # grâce 0 côté PEP — le refresh est géré côté agent (§17.10)
         )
@@ -464,7 +465,23 @@ def validate_mission_token(
         logger.warning("mission_token iat dans le futur au-delà du skew toléré")
         raise MissionTokenInvalid("iat_future")
 
-    # 5. aud doit contenir l'identifiant d'instance de CE MCP (T03/T11).
+    # 5. Les claims de traçabilité/enforcement mission sont obligatoires et typés.
+    mission_id = claims.get("mission_id")
+    if not isinstance(mission_id, str) or not mission_id:
+        logger.warning("mission_token mission_id de type invalide")
+        raise MissionTokenInvalid("bad_mission_id")
+
+    jti = claims.get("jti")
+    if not isinstance(jti, str) or not jti:
+        logger.warning("mission_token jti de type invalide")
+        raise MissionTokenInvalid("bad_jti")
+
+    scope = claims.get("scope")
+    if not isinstance(scope, list) or not scope or not all(isinstance(s, str) and s for s in scope):
+        logger.warning("mission_token scope de type invalide")
+        raise MissionTokenInvalid("bad_scope")
+
+    # 6. aud doit contenir l'identifiant d'instance de CE MCP (T03/T11).
     #    `aud` est soit une str, soit une list[str] (RFC 7519). Toute autre forme
     #    est un token malformé → 401 (et JAMAIS un crash 500 sur input forgé).
     aud = claims.get("aud")
@@ -479,7 +496,7 @@ def validate_mission_token(
         logger.warning("mission_token aud ne contient pas l'instance configurée")
         raise MissionTokenForbidden("wrong_audience")
 
-    # 6. component_id[<kind>] doit correspondre à l'instance configurée.
+    # 7. component_id[<kind>] doit correspondre à l'instance configurée.
     component_id = claims.get("component_id")
     if not isinstance(component_id, dict) or component_id.get(component_kind) != instance_id:
         logger.warning("mission_token component_id ne correspond pas à l'instance/kind configurés")

@@ -26,7 +26,8 @@
 │  │ LoggingMiddleware   — ring buffer 200 requêtes       │   │
 │  │ AdminMiddleware     — /admin, /admin/static/, /admin/api/ │
 │  │ HealthCheckMiddleware — /health, /healthz, /ready    │   │
-│  │ AuthMiddleware      — Bearer Token → ContextVar      │   │
+│  │ AuthMissionJWTMiddleware — mission_token ES256/JWKS  │   │
+│  │ AuthMiddleware      — Bearer/JWT → ContextVars       │   │
 │  │ FastMCP             — /mcp (Streamable HTTP)         │   │
 │  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────┬────────────────────────────────────┘
@@ -66,13 +67,43 @@ Toute fonctionnalité doit être exposée dans les 3 couches :
 - Utilisée pour le premier accès (avant création de tokens S3)
 - Comparaison : `hmac.compare_digest()` (anti timing-attack)
 
-### Cycle de vie d'une requête MCP
+### Mission Token PEP
+- Activation : `STARTER_KIT_AUTH_MODE=jwt|dual-stack`
+- Module : `infra/auth_mission_jwt_middleware.py`
+- Rôle : valider un `mission_token` ES256 émis par mcp-mission via JWKS dynamique
+- Claims obligatoires : `iss`, `aud`, `iat`, `exp`, `mission_id`, `jti`, `scope`
+- Contexte exposé :
+  - `request.scope["mission_context"]`
+  - `current_mission_context`
+  - `current_token_info` avec `auth_type=mission_token`
+  - `mission_scope` séparé de `allowed_resources`
+
+Le pont vers `current_token_info` permet aux outils existants de rester
+request-scoped via les helpers du starter-kit, sans conférer de droit `admin`.
+Il ne convertit pas le scope mcp-mission en ressources legacy.
+Par défaut, `check_access(resource_id)` échoue en fail-close sous
+`mission_token` tant qu'aucune policy locale ne mappe la ressource.
+`check_write_permission()` échoue aussi : le `scope` mission ne confère pas de
+droit `write` legacy.
+L'enforcement fin `mission_id` actif / OPA Rego reste à implémenter dans le MCP
+consommateur quand le domaine l'exige.
+
+### Cycle de vie d'une requête MCP legacy
 ```
 1. Client HTTP → Bearer Token dans header Authorization
 2. AuthMiddleware → hash SHA-256 → lookup cache TTL
 3. Token valide → current_token_info.set(info)  [ContextVar]
 4. Outil MCP → check_access(resource_id)  [lit le ContextVar]
 5. Réponse → {"status": "ok", "data": ...}
+```
+
+### Cycle de vie d'une requête mission_token
+```
+1. Client HTTP → Authorization: Bearer <mission_token JWT>
+2. AuthMissionJWTMiddleware → validation ES256/JWKS + aud/component_id
+3. Claims valides → scope["mission_context"]
+4. AuthMiddleware → current_mission_context + current_token_info mission_token
+5. Outil MCP → helpers ContextVar + contrôles métier/OPA éventuels
 ```
 
 ---
@@ -88,8 +119,10 @@ src/mon_service/
 │   └── api.py         # REST API admin (health, tokens, logs)
 ├── auth/
 │   ├── middleware.py  # AuthMiddleware + LoggingMiddleware
-│   ├── context.py     # check_access(), ContextVar
+│   ├── context.py     # check_access(), ContextVars legacy + mission
 │   └── token_store.py # Token Store S3 + cache
+├── infra/
+│   └── auth_mission_jwt_middleware.py # PEP mission_token ES256/JWKS
 └── static/
     ├── admin.html     # SPA HTML
     ├── css/admin.css  # Design System Cloud Temple
@@ -103,6 +136,21 @@ src/mon_service/
         └── app.js     # Navigation + auth + init
 ```
 
+### Règles agentiques livrées
+
+```
+DESIGN/AGENTIC_RULES/
+├── WORKSPACE_CLINE_ADVANCE_RULES.md # Live Memory + Graph Memory
+├── WORKFLOW_ENGINEERING.md          # Review adversariale + tests
+├── WORKFLOW_GIT.md                  # Branches, issues, PR
+└── WORKFLOW_GIT_EPIC.md             # EPIC, RC flow, gates humains
+```
+
+Ces fichiers sont des templates à adapter dans le projet dérivé. Ils relient le
+travail des agents IA à Live Memory pour le contexte court, à Graph Memory pour
+l'index sémantique durable, et aux fichiers du repository comme source finale
+de vérité.
+
 ---
 
 ## Sécurité — Points d'attention
@@ -111,6 +159,8 @@ src/mon_service/
 |--------|-----------|
 | Timing attack sur le bootstrap key | `hmac.compare_digest()` |
 | Token via query string | Bearer header uniquement |
+| mission_token malformé | Validation stricte ES256/JWKS, `jti` et `scope` obligatoires |
+| mission_token validé mais outils anonymes | Pont ContextVar mission dans `AuthMiddleware` |
 | Body trop volumineux (OOM) | `_MAX_BODY_SIZE = 10 MB` |
 | CORS wildcard sur l'admin | Same-origin, pas d'`Access-Control-Allow-Origin: *` |
 | Hash prefix trop court → collision | Min 8 caractères pour revoke |
@@ -144,6 +194,7 @@ print(f"🔧 [MonOutil] Message", file=sys.stderr)
 | Streamable HTTP (pas SSE) | Standard MCP v2024+, bidirectionnel, proxy-friendly |
 | FastMCP (pas MCP SDK bas niveau) | Décorateurs `@mcp.tool()`, moins de boilerplate |
 | ContextVar pour l'auth | Thread-safe en asyncio, zéro couplage |
+| AuthMissionJWT en amont du Bearer legacy | Validation PEP avant fallback dual-stack |
 | S3 pour les tokens | Persistance sans base de données, compatible cloud |
 | Ring buffer 200 entrées | Activité temps réel sans surcharge mémoire |
 | Sidebar + JS séparés | Maintenabilité, extensibilité métier |

@@ -107,10 +107,13 @@ async def system_whoami() -> dict:
             "message": "Aucune authentification détectée",
         }
 
-    # Déterminer le type d'auth
-    auth_type = "bootstrap" if info.get("client_name") == "admin" and not info.get("hash") else "token"
-    if info.get("hash"):
-        auth_type = "token"
+    # Déterminer le type d'auth. Les middlewares peuvent déjà fournir un
+    # auth_type explicite (mission_token, OIDC, etc.).
+    auth_type = info.get("auth_type")
+    if not auth_type:
+        auth_type = "bootstrap" if info.get("client_name") == "admin" and not info.get("hash") else "token"
+        if info.get("hash"):
+            auth_type = "token"
 
     result = {
         "status": "ok",
@@ -129,6 +132,14 @@ async def system_whoami() -> dict:
         result["expires_at"] = info["expires_at"]
     if info.get("hash"):
         result["hash_prefix"] = info["hash"][:12]
+    if info.get("mission_id"):
+        result["mission_id"] = info["mission_id"]
+    if info.get("jti"):
+        result["jti"] = info["jti"]
+    if info.get("tenant_id"):
+        result["tenant_id"] = info["tenant_id"]
+    if info.get("template_id"):
+        result["template_id"] = info["template_id"]
 
     return result
 

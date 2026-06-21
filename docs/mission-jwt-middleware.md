@@ -22,8 +22,9 @@ chaque étape, cf. §17.10 « enforcement en 9 étapes ») :
    (absent du JWKS publié) → refus.
 3. Signature ES256 + `exp` (**grâce 0 côté PEP** — le refresh est géré côté agent).
 4. `iat <= now + leeway` (anti-skew d'horloge avancée, `MISSION_JWT_IAT_LEEWAY_SECONDS`).
-5. `aud` **contient** `MCP_INSTANCE_ID` (sinon `403`).
-6. `component_id[MCP_COMPONENT_KIND] == MCP_INSTANCE_ID` (sinon `403`).
+5. `mission_id`, `jti` et `scope` sont présents et correctement typés.
+6. `aud` **contient** `MCP_INSTANCE_ID` (sinon `403`).
+7. `component_id[MCP_COMPONENT_KIND] == MCP_INSTANCE_ID` (sinon `403`).
 
 Les étapes 7-9 du contrat mcp-mission (vérification `mission_id` actif, OPA Rego,
 enforcement applicatif) relèvent du MCP consommateur et **ne sont pas** dans le
@@ -40,11 +41,29 @@ En cas de succès, les claims utiles sont projetés dans
 }
 ```
 
+`AuthMiddleware` lit ensuite ce `mission_context` et alimente les `ContextVar`
+du starter-kit :
+
+- `current_mission_context` contient les claims mission utiles ;
+- `current_token_info` reçoit une identité compatible avec les helpers existants,
+  avec `auth_type=mission_token` et sans permission `admin`.
+- `scope` est exposé comme `mission_scope` ; il n'est pas converti en
+  `allowed_resources` legacy.
+
+Cela évite qu'un `mission_token` validé arrive dans les outils MCP comme une
+requête anonyme. L'autorisation fine reste volontairement séparée : le pont
+ContextVar fournit une identité de requête, pas une décision OPA complète.
+Par défaut, `check_access(resource_id)` échoue en fail-close pour une identité
+`mission_token` si aucune policy locale ne mappe explicitement cette ressource.
+`check_write_permission()` échoue également en fail-close : le `scope`
+mcp-mission ne confère aucun droit `write` legacy.
+
 Réponses d'échec (corps JSON minimal, sans oracle d'attaque) :
 
 | Cas                                                   | Statut |
 | ----------------------------------------------------- | ------ |
 | JWT malformé / signature / `exp` / `iat` / `iss` / `kid` inconnu | `401` |
+| `mission_id`, `jti` ou `scope` absent / mal typé          | `401` |
 | `aud` ou `component_id` non conforme                  | `403`  |
 | JWKS indisponible **et** cache expiré (fail-close)    | `503`  |
 | Bearer legacy sur appel mission, en mode `jwt`        | `401`  |
@@ -137,6 +156,18 @@ n'est ajouté que si `STARTER_KIT_AUTH_MODE != "bearer"` :
 ```
 Logging → Admin → HealthCheck → AuthMissionJWT → AuthBearer(legacy) → FastMCP
 ```
+
+Responsabilités :
+
+- `AuthMissionJWTMiddleware` valide le JWT et écrit `scope["mission_context"]`.
+- `AuthMiddleware` reste le point unique d'injection des `ContextVar` utilisés
+  par les outils (`current_token_info`, `current_mission_context`).
+- `system_whoami` expose `auth_type=mission_token`, `mission_id`, `jti`,
+  `tenant_id` et `template_id` quand la requête est authentifiée par mission.
+- Les outils métier qui appellent `check_access(resource_id)` doivent ajouter un
+  mapping/policy local pour autoriser une ressource sous `mission_token`.
+- Les outils métier qui appellent `check_write_permission()` doivent aussi
+  ajouter une policy locale explicite avant d'autoriser une mutation.
 
 ## 7. Limites et hypothèses (V1)
 

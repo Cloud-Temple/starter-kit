@@ -2,7 +2,7 @@
 """
 Helpers d'authentification basés sur contextvars.
 
-Le middleware ASGI injecte les infos du token dans les contextvars.
+Le middleware ASGI injecte les infos d'authentification dans les contextvars.
 Les outils MCP appellent check_access() et check_write_permission()
 pour vérifier les permissions sans dépendre du framework HTTP.
 """
@@ -12,6 +12,36 @@ from typing import Optional
 
 # --- Context variables injectées par le middleware ---
 current_token_info: ContextVar[Optional[dict]] = ContextVar("current_token_info", default=None)
+current_mission_context: ContextVar[Optional[dict]] = ContextVar("current_mission_context", default=None)
+
+
+def mission_context_to_token_info(ctx: dict) -> dict:
+    """
+    Transforme un mission_context validé en identité compatible avec les helpers.
+
+    Ce pont ne confère jamais `admin`. Il expose une identité traçable pour les
+    outils existants, tandis que l'enforcement fin mission/OPA reste à la charge
+    du MCP consommateur.
+    """
+    mission_id = ctx.get("mission_id") or "unknown"
+    scope = ctx.get("scope") or []
+    if not isinstance(scope, list):
+        scope = []
+
+    permissions = ["mission", "read"]
+
+    return {
+        "auth_type": "mission_token",
+        "client_name": f"mission:{mission_id}",
+        "permissions": permissions,
+        "allowed_resources": [],
+        "mission_scope": list(scope),
+        "mission_id": mission_id,
+        "jti": ctx.get("jti"),
+        "tenant_id": ctx.get("tenant_id"),
+        "template_id": ctx.get("template_id"),
+        "mission_context": ctx,
+    }
 
 
 def check_access(resource_id: str) -> Optional[dict]:
@@ -36,6 +66,16 @@ def check_access(resource_id: str) -> Optional[dict]:
 
     # Vérifier que la ressource est dans la liste autorisée
     allowed = token_info.get("allowed_resources", [])
+    if token_info.get("auth_type") == "mission_token":
+        if allowed and resource_id in allowed:
+            return None
+        return {
+            "status": "error",
+            "message": (
+                f"Accès refusé à la ressource '{resource_id}' : "
+                "mission_token validé mais aucune policy locale ne mappe cette ressource"
+            ),
+        }
     if allowed and resource_id not in allowed:
         return {
             "status": "error",
