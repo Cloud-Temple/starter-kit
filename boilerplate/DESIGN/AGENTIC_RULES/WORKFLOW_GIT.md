@@ -23,7 +23,8 @@ divergence and corrupts the shared history.
 
 For a repository whose releases can impact several clients, the RC flow
 details must be carried by the repository-specific or EPIC-specific rules.
-For this provider, the normative rule lives in `WORKFLOW_GIT_EPIC.md`.
+For generated projects, the generic template lives in `WORKFLOW_GIT_EPIC.md`
+and must be adapted to the repository's release model.
 
 Generic guardrails:
 - no merge into `main` outside the human-reviewed GitHub PR process (no local or

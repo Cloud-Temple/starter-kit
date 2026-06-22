@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Generalized the `boilerplate/DESIGN/AGENTIC_RULES/WORKFLOW_GIT_EPIC.md`
+  template by removing Terraform-provider-specific wording and strengthening
+  EPIC -> child issue -> PR traceability rules.
+- Replaced remaining provider-specific references in the generated project
+  Git and memory rule templates with project-generic wording.
+
+---
+
 ## v1.2.0 — 2026-06-21 — Mission token PEP baseline
 
 This release adds the reusable `AuthMissionJWTMiddleware` for mcp-mission

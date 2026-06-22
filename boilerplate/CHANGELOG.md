@@ -5,6 +5,17 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ---
 
+## [Unreleased]
+
+### Changed
+- Généralisation des templates `DESIGN/AGENTIC_RULES/` :
+  - suppression des formulations spécifiques au Terraform provider ;
+  - modèle EPIC générique avec issues enfants et PR reliées ;
+  - clarification des champs Project configurables par projet ;
+  - wording Live Memory / Graph Memory rendu indépendant du workspace source.
+
+---
+
 ## [1.2.0] — 2026-06-21
 
 ### Added

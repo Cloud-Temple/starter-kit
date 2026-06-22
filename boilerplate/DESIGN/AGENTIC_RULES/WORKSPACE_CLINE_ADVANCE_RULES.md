@@ -43,7 +43,10 @@ Long-lived semantic recall is managed by a **Graph Memory** MCP server.
 >
 > ⚠️ **Never put tokens, endpoints, or sensitive server parameters in these rules.** They live in MCP client configuration / vault / env.
 
-> ⚠️ **Namespace discipline for this workspace:** use the standard MCP servers `live-mem` and `graph-mem` only. Do not use personal `my-live-mem` or `my-graph-mem` namespaces for this provider workspace.
+> ⚠️ **Namespace discipline for this workspace:** define the MCP server
+> namespaces used by the project here. For shared or production workspaces,
+> prefer team-scoped servers over personal namespaces unless the project
+> explicitly allows personal memory.
 
 ## 📖 At Session Start (MANDATORY)
 
