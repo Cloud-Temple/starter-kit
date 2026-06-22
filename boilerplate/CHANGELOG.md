@@ -15,6 +15,8 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
   - wording Live Memory / Graph Memory rendu indépendant du workspace source.
 - Ajout de `DESIGN/AGENTIC_RULES/MAIN_RULES.md` comme point d'entrée anglais
   des règles projet.
+- Virtualisation des chemins de règles avec `{AGENTIC_RULES_DIR}` pour permettre
+  aux projets générés de déplacer le répertoire sans réécrire la sémantique.
 - Renommage du template mémoire workspace pour supprimer la mention d'un outil
   agentique spécifique.
 

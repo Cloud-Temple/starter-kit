@@ -719,6 +719,10 @@ porte les règles détaillées. Ces fichiers ne sont pas les règles de maintena
 starter-kit lui-même : ils définissent le cadre que le nouveau projet donne à ses
 agents IA.
 
+Dans les règles, ce répertoire est virtualisé par `{AGENTIC_RULES_DIR}`. La
+valeur par défaut du boilerplate est `DESIGN/AGENTIC_RULES`, mais un projet
+généré peut la remplacer s'il déplace les règles.
+
 | Fichier | Rôle |
 | ------- | ---- |
 | `boilerplate/DESIGN/AGENTIC_RULES/MAIN_RULES.md` | Point d'entrée des règles projet générées |

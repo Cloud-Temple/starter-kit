@@ -23,8 +23,9 @@ divergence and corrupts the shared history.
 
 For a repository whose releases can impact several clients, the RC flow
 details must be carried by the repository-specific or EPIC-specific rules.
-For generated projects, the generic template lives in `WORKFLOW_GIT_EPIC.md`
-and must be adapted to the repository's release model.
+For generated projects, the generic template lives in
+`{AGENTIC_RULES_DIR}/WORKFLOW_GIT_EPIC.md` and must be adapted to the
+repository's release model.
 
 Generic guardrails:
 - no merge into `main` outside the human-reviewed GitHub PR process (no local or
@@ -240,9 +241,9 @@ Mandatory checklist before answering:
 
 ### Project impact of a review
 
-The normative Project status rule is defined in `WORKFLOW_GIT_EPIC.md`. Do not
-redefine it here. After publishing the GitHub review, apply that rule to the
-Project.
+The normative Project status rule is defined in
+`{AGENTIC_RULES_DIR}/WORKFLOW_GIT_EPIC.md`. Do not redefine it here. After
+publishing the GitHub review, apply that rule to the Project.
 
 The reviewer model is responsible for aligning the Project right after the
 review is published. If it lacks Project rights, it must report it to the
@@ -256,15 +257,16 @@ if the reviewer did not report a gap. This verification is mandatory before
 answering that the review or the lot is done.
 
 When the fix is pushed, the return from `In Progress` to `Review` requires an
-explicit signal defined in `WORKFLOW_GIT_EPIC.md`. A simple push is not
-enough.
+explicit signal defined in `{AGENTIC_RULES_DIR}/WORKFLOW_GIT_EPIC.md`. A
+simple push is not enough.
 
 A stage review is a review done at the end of a lot, before moving to
 `Review`, before merge, or after a blocking finding. Each stage review must be
 launched explicitly in these cases.
 
 Minimal checks of a stage review:
-- the tracked PR exists in the Project if `WORKFLOW_GIT_EPIC.md` requires it;
+- the tracked PR exists in the Project if
+  `{AGENTIC_RULES_DIR}/WORKFLOW_GIT_EPIC.md` requires it;
 - GitHub comments and reviews since the last Project move have been re-read,
   including those without a canonical marker;
 - any comment whose content requires a fix before merge is treated as a

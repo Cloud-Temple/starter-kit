@@ -2,24 +2,36 @@
 
 > **Read this file first, at the beginning of every session and every task.**
 > This file is the authoritative entrypoint. It does not replace the detailed
-> rules: read every file in this directory before starting work.
+> rules: read every file in `{AGENTIC_RULES_DIR}` before starting work.
+
+## Configuration
+
+Set this value when adapting the starter-kit to a generated project:
+
+```text
+AGENTIC_RULES_DIR=DESIGN/AGENTIC_RULES
+```
+
+All rule paths below use `{AGENTIC_RULES_DIR}`. If a project moves these files
+to another directory, update `AGENTIC_RULES_DIR` first and keep the relative file
+names stable unless the project owner explicitly approves a rules layout change.
 
 ## Rule Index
 
 | File | Scope |
 | ---- | ----- |
-| `MAIN_RULES.md` *(this file)* | Non-negotiable obligations and rule index |
-| `WORKSPACE_ADVANCE_RULES.md` | Persistent memory, Live Memory, Graph Memory, bank hygiene |
-| `WORKFLOW_ENGINEERING.md` | Engineering discipline, adversarial review, test rigor, human gates |
-| `WORKFLOW_GIT.md` | Git workflow, PR to main, issue links, PR review process |
-| `WORKFLOW_GIT_EPIC.md` | EPIC piloting, GitHub Project v2, statuses, fields, release traceability |
+| `{AGENTIC_RULES_DIR}/MAIN_RULES.md` *(this file)* | Non-negotiable obligations and rule index |
+| `{AGENTIC_RULES_DIR}/WORKSPACE_ADVANCE_RULES.md` | Persistent memory, Live Memory, Graph Memory, bank hygiene |
+| `{AGENTIC_RULES_DIR}/WORKFLOW_ENGINEERING.md` | Engineering discipline, adversarial review, test rigor, human gates |
+| `{AGENTIC_RULES_DIR}/WORKFLOW_GIT.md` | Git workflow, PR to main, issue links, PR review process |
+| `{AGENTIC_RULES_DIR}/WORKFLOW_GIT_EPIC.md` | EPIC piloting, GitHub Project v2, statuses, fields, release traceability |
 
 ## Non-Negotiable Obligations
 
 1. **Read the memory bank at startup** - load the project rules, the full bank,
    and recent live notes before doing any work. Configure the concrete
    `{LIVE_MCP_SERVER}`, `{SPACE}`, `{GRAPH_MCP_SERVER}` and `{GRAPH_MEMORY_ID}`
-   values in `WORKSPACE_ADVANCE_RULES.md`.
+   values in `{AGENTIC_RULES_DIR}/WORKSPACE_ADVANCE_RULES.md`.
 2. **Use independent adversarial review** - run the project-defined reviewer at
    the beginning and end of non-trivial work, and before any GREEN application
    code commit. A RED test commit may precede the final review. A GREEN commit

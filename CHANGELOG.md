@@ -9,6 +9,8 @@
   EPIC -> child issue -> PR traceability rules.
 - Added `boilerplate/DESIGN/AGENTIC_RULES/MAIN_RULES.md` as the English
   entrypoint for generated project rules.
+- Virtualized generated-project rule paths with `{AGENTIC_RULES_DIR}` so
+  projects can relocate the rule directory without rewriting rule semantics.
 - Replaced remaining provider-specific references in the generated project
   Git and memory rule templates with project-generic wording, and renamed the
   workspace memory template to remove tool-specific naming.

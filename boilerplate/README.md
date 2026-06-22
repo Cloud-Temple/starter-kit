@@ -211,6 +211,10 @@ est le point d'entrée à lire en premier. Le dossier
 pour les agents IA qui travailleront dans ce projet une fois le boilerplate
 copié.
 
+Dans ces règles, le répertoire est virtualisé par `{AGENTIC_RULES_DIR}`. La
+valeur par défaut est `DESIGN/AGENTIC_RULES`, à adapter si le projet déplace ses
+règles.
+
 | Fichier | À adapter pour le projet |
 | ------- | ------------------------ |
 | `DESIGN/AGENTIC_RULES/MAIN_RULES.md` | Point d'entrée des règles projet, obligations non négociables et index |

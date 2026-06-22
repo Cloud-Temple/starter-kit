@@ -4,10 +4,11 @@ This file describes HOW changes are designed, reviewed, tested and gated. It is
 the engineering counterpart to the process files and defers to them for their
 own mechanics:
 
-- `WORKFLOW_GIT.md` — branches, commits, PR/issue lifecycle, publishing a review.
-- `WORKFLOW_GIT_EPIC.md` — project board, integration/release flow, status model,
+- `{AGENTIC_RULES_DIR}/WORKFLOW_GIT.md` — branches, commits, PR/issue
+  lifecycle, publishing a review.
+- `{AGENTIC_RULES_DIR}/WORKFLOW_GIT_EPIC.md` — project board, integration/release flow, status model,
   the pilot/reviewer principle, protection of the default/release branch.
-- `WORKSPACE_ADVANCE_RULES.md` — memory bank protocol.
+- `{AGENTIC_RULES_DIR}/WORKSPACE_ADVANCE_RULES.md` — memory bank protocol.
 
 Those files own VCS, board and memory. **This file owns the engineering
 discipline**: the adversarial review cycle, the reviewer invocation, the test
@@ -18,13 +19,13 @@ single project-specific value is the reviewer declared in §3.
 
 ## 1. Roles: pilot and reviewer
 
-Per `WORKFLOW_GIT_EPIC.md` ("Mandatory reviews"), every change separates a
-**pilot** (produces the change) from an independent **reviewer** (challenges
-it). The roles are not tied to a specific tool, and the same agent never holds
-both when a second one is available; the default reviewer is an **independent
-adversarial model** (declared in §3). Every change is reviewed — including
-trivial ones — and the review *depth* scales with risk (the full cycle below,
-with a PLAN review, for state-touching or risky work).
+Per `{AGENTIC_RULES_DIR}/WORKFLOW_GIT_EPIC.md` ("Mandatory reviews"), every
+change separates a **pilot** (produces the change) from an independent
+**reviewer** (challenges it). The roles are not tied to a specific tool, and
+the same agent never holds both when a second one is available; the default
+reviewer is an **independent adversarial model** (declared in §3). Every change
+is reviewed — including trivial ones — and the review *depth* scales with risk
+(the full cycle below, with a PLAN review, for state-touching or risky work).
 
 ## 2. The mandatory review cycle
 
@@ -36,7 +37,7 @@ carries non-trivial risk.
 1. **PLAN review (before coding)** — submit the plan to the adversarial reviewer
    with the attack questions enumerated explicitly. Resolve every NO-GO before
    writing code.
-2. **Implement** on a dedicated branch (see `WORKFLOW_GIT.md`).
+2. **Implement** on a dedicated branch (see `{AGENTIC_RULES_DIR}/WORKFLOW_GIT.md`).
 3. **Pre-commit adversarial review** of the working change.
 4. **Commit / push**.
 5. **Independent reviewer pass on the committed diff** — feed the real diff, the
@@ -83,7 +84,7 @@ Independent of the reviewing tool (CLI, API, CI job, review service):
 - **No bypass** — if the reviewer cannot be called (confidentiality, or the
   tooling refuses even after user authorization), do a local review, record the
   exception, and continue only if the decision stays reversible or is explicitly
-  validated (per `WORKFLOW_GIT_EPIC.md`).
+  validated (per `{AGENTIC_RULES_DIR}/WORKFLOW_GIT_EPIC.md`).
 
 ## 4. Test discipline (non-complacent, mutation-proven)
 
@@ -134,7 +135,7 @@ Applies to any system that persists, synchronizes, derives or deletes state
   changes only WHO executes:
   every approval gate still applies in full (mandatory human review, the required
   approval markers, the validation step, CI) regardless of who performs the step.
-  See `WORKFLOW_GIT_EPIC.md` for the normative gates.
+  See `{AGENTIC_RULES_DIR}/WORKFLOW_GIT_EPIC.md` for the normative gates.
 - **No heavy load loops against shared or production systems.** Use bounded,
   qualitative probes with a circuit breaker, and stop at the first sign of
   distress.
@@ -142,7 +143,7 @@ Applies to any system that persists, synchronizes, derives or deletes state
 ## 7. Commit & changelog hygiene
 
 - Commit messages are factual; the precise subject format and the issue-closure
-  keywords are defined in `WORKFLOW_GIT.md`.
+  keywords are defined in `{AGENTIC_RULES_DIR}/WORKFLOW_GIT.md`.
 - **Forbidden anywhere:** automated authorship trailers/footers added by the
   tooling (e.g. an agent `Co-Authored-By:` line, or a "Generated with …" footer).
 - A changelog entry is mandatory for every user-facing change.

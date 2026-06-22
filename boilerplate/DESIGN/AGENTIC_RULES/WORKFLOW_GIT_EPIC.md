@@ -1,7 +1,7 @@
 # Git Workflow Epic / GitHub Project
 
-These rules complement `WORKFLOW_GIT.md` for piloting an EPIC tracked in a
-GitHub Project v2.
+These rules complement `{AGENTIC_RULES_DIR}/WORKFLOW_GIT.md` for piloting an
+EPIC tracked in a GitHub Project v2.
 
 This file is a generic template for projects created from the starter-kit. A
 project may add domain-specific fields, but it must not replace the core
@@ -109,8 +109,8 @@ Rules:
 
 Use this flow when a release can impact multiple consumers, environments or
 automation users. For small single-consumer repositories, the project may use
-the nominal `main` PR flow from `WORKFLOW_GIT.md` if the EPIC explicitly says
-there is no RC train.
+the nominal `main` PR flow from `{AGENTIC_RULES_DIR}/WORKFLOW_GIT.md` if the
+EPIC explicitly says there is no RC train.
 
 Rules:
 - use a dedicated RC branch in the `rc/vX.Y.Z` format as the target of feature
@@ -386,7 +386,7 @@ Rules:
 - implementation PRs must reference a child issue with `Refs #N`, `Closes #N`,
   `Fixes #N` or `Related to #N`, depending on the workflow;
 - a PR that resolves an issue outside an RC flow must contain `Closes #N` in
-  its body, as defined in `WORKFLOW_GIT.md`;
+  its body, as defined in `{AGENTIC_RULES_DIR}/WORKFLOW_GIT.md`;
 - a feature PR targeting an RC branch uses `Refs #N`; the RC -> `main` PR
   carries the final `Closes #N`;
 - the issue describes the problem and acceptance criteria;
@@ -522,7 +522,7 @@ Rules:
 - the review must challenge the mapping, statuses, risks, priorities and
   Project impacts;
 - any GitHub PR requested for review must receive a review or a GitHub comment,
-  per `WORKFLOW_GIT.md`;
+  per `{AGENTIC_RULES_DIR}/WORKFLOW_GIT.md`;
 - if the external reviewer cannot be called for confidentiality reasons, or if
   the tooling refuses the call even after user authorization, do not bypass;
 - in that case, do a local review by the available model, note the exception,
