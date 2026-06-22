@@ -138,6 +138,7 @@ boilerplate/
 ├── DESIGN/
 │   ├── ARCHITECTURE.md        # Schémas + décisions architecturales
 │   └── AGENTIC_RULES/         # Règles agentiques à adapter au projet
+├── MAIN_RULES.md              # Point d'entrée des règles projet
 ├── CHANGELOG.md               # Historique des versions
 ├── Dockerfile
 ├── docker-compose.yml
@@ -204,16 +205,18 @@ Voir le guide complet : [Starter Kit MCP Cloud Temple](../README.md)
 
 ## Règles agentiques du projet
 
-Le dossier [`DESIGN/AGENTIC_RULES/`](DESIGN/AGENTIC_RULES/) contient des
-templates de règles pour les agents IA qui travailleront dans ce projet une fois
-le boilerplate copié.
+Le fichier [`MAIN_RULES.md`](MAIN_RULES.md) est le point d'entrée à lire en
+premier. Le dossier [`DESIGN/AGENTIC_RULES/`](DESIGN/AGENTIC_RULES/) contient
+les règles détaillées pour les agents IA qui travailleront dans ce projet une
+fois le boilerplate copié.
 
 | Fichier | À adapter pour le projet |
 | ------- | ------------------------ |
-| `WORKSPACE_CLINE_ADVANCE_RULES.md` | Live Memory, Graph Memory, identifiants `SPACE` / `GRAPH_MEMORY_ID`, protocole de consolidation |
-| `WORKFLOW_ENGINEERING.md` | Reviewer indépendant, cycle adversarial, tests RED/GREEN non complaisants |
-| `WORKFLOW_GIT.md` | Branches, issues, PR, liens GitHub, règles de merge |
-| `WORKFLOW_GIT_EPIC.md` | EPIC, RC flow, statuts Project, gates humains |
+| `MAIN_RULES.md` | Point d'entrée des règles projet, obligations non négociables et index |
+| `DESIGN/AGENTIC_RULES/WORKSPACE_ADVANCE_RULES.md` | Live Memory, Graph Memory, identifiants `SPACE` / `GRAPH_MEMORY_ID`, protocole de consolidation |
+| `DESIGN/AGENTIC_RULES/WORKFLOW_ENGINEERING.md` | Reviewer indépendant, cycle adversarial, tests RED/GREEN non complaisants |
+| `DESIGN/AGENTIC_RULES/WORKFLOW_GIT.md` | Branches, issues, PR, liens GitHub, règles de merge |
+| `DESIGN/AGENTIC_RULES/WORKFLOW_GIT_EPIC.md` | EPIC, RC flow, statuts Project, gates humains |
 
 Le modèle mémoire sépare :
 

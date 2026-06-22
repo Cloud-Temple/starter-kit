@@ -1,7 +1,8 @@
-# Cline's Memory Bank — Live Memory + Graph Memory (Advanced Template)
+# Workspace Memory Bank — Live Memory + Graph Memory (Advanced Template)
 
 > **Audience** : workspaces connected to **both** Live Memory and Graph Memory MCP servers.
-> **For Live-Memory-only workspaces**, use [`WORKSPACE_CLINE_RULES.md`](WORKSPACE_CLINE_RULES.md) instead.
+> **For Live-Memory-only workspaces**, remove the Graph Memory sections or keep
+> them as future configuration notes.
 
 My memory resets completely between sessions. I use the **Memory Bank** as the mandatory session bootstrap, **Graph Memory** for durable semantic recall across documents, and **repository files** as the canonical, detailed source of truth.
 

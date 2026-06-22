@@ -139,8 +139,9 @@ src/mon_service/
 ### Règles agentiques livrées
 
 ```
+MAIN_RULES.md                          # Point d'entrée des règles projet
 DESIGN/AGENTIC_RULES/
-├── WORKSPACE_CLINE_ADVANCE_RULES.md # Live Memory + Graph Memory
+├── WORKSPACE_ADVANCE_RULES.md       # Live Memory + Graph Memory
 ├── WORKFLOW_ENGINEERING.md          # Review adversariale + tests
 ├── WORKFLOW_GIT.md                  # Branches, issues, PR
 └── WORKFLOW_GIT_EPIC.md             # EPIC, RC flow, gates humains

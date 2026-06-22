@@ -24,7 +24,7 @@
 | Comprendre l'owner-based isolation future | [`docs/owner-based-isolation.md`](docs/owner-based-isolation.md) |
 | Comprendre le futur PolicyStore | [`docs/policy-store.md`](docs/policy-store.md) |
 | Valider un `mission_token` mcp-mission (PEP, ES256/JWKS) | [`docs/mission-jwt-middleware.md`](docs/mission-jwt-middleware.md) |
-| Installer les règles agentiques d'un projet dérivé | [`boilerplate/DESIGN/AGENTIC_RULES/`](boilerplate/DESIGN/AGENTIC_RULES/) |
+| Installer les règles agentiques d'un projet dérivé | [`boilerplate/MAIN_RULES.md`](boilerplate/MAIN_RULES.md) |
 
 Ces guides restent génériques. Les règles métier, prompts et scénarios propres à un MCP concret doivent rester dans le repo du MCP concret.
 
@@ -688,6 +688,7 @@ boilerplate/
 ├── DESIGN/
 │   ├── ARCHITECTURE.md      # Schéma architecture + décisions + sécurité
 │   └── AGENTIC_RULES/       # Templates de règles pour agents IA du projet dérivé
+├── MAIN_RULES.md            # Point d'entrée des règles projet générées
 ├── CHANGELOG.md             # Historique des versions (format SemVer)
 ├── Dockerfile               # Python 3.11, utilisateur non-root
 ├── docker-compose.yml       # WAF (port 8082) → MCP (port 8002, interne)
@@ -702,7 +703,7 @@ boilerplate/
 1. Copier le dossier `boilerplate/` dans un nouveau repo
 2. Renommer `mon_service` → votre nom de service
 3. Adapter `config.py` avec vos variables d'environnement
-4. Adapter `DESIGN/AGENTIC_RULES/` avec les identifiants mémoire et le workflow du projet
+4. Adapter `MAIN_RULES.md` et `DESIGN/AGENTIC_RULES/` avec les identifiants mémoire et le workflow du projet
 5. Ajouter vos services métier dans `src/mon_service/core/`
 6. Ajouter vos outils MCP dans `server.py`
 7. Pour chaque outil : compléter display.py → commands.py → shell.py
@@ -711,17 +712,20 @@ boilerplate/
 
 ## 11. Règles agentiques pour projets dérivés
 
+Le fichier [`boilerplate/MAIN_RULES.md`](boilerplate/MAIN_RULES.md) est le point
+d'entrée à lire en premier dans chaque projet créé depuis le starter-kit.
 Le dossier [`boilerplate/DESIGN/AGENTIC_RULES/`](boilerplate/DESIGN/AGENTIC_RULES/)
-livre des templates à copier dans chaque projet créé depuis le starter-kit.
-Ces fichiers ne sont pas les règles de maintenance du starter-kit lui-même :
-ils définissent le cadre que le nouveau projet donne à ses agents IA.
+porte les règles détaillées. Ces fichiers ne sont pas les règles de maintenance
+du starter-kit lui-même : ils définissent le cadre que le nouveau projet donne à
+ses agents IA.
 
 | Fichier | Rôle |
 | ------- | ---- |
-| `WORKSPACE_CLINE_ADVANCE_RULES.md` | Bootstrap mémoire avec Live Memory, recherche Graph Memory, hygiène de consolidation |
-| `WORKFLOW_ENGINEERING.md` | Cycle engineering : plan, implémentation, review adversariale, tests non complaisants |
-| `WORKFLOW_GIT.md` | Branches, issues, PR, liens `Closes #N`, séparation issue/PR |
-| `WORKFLOW_GIT_EPIC.md` | Pilotage EPIC, RC flow, statuts Project, gates humains |
+| `boilerplate/MAIN_RULES.md` | Point d'entrée des règles projet générées |
+| `boilerplate/DESIGN/AGENTIC_RULES/WORKSPACE_ADVANCE_RULES.md` | Bootstrap mémoire avec Live Memory, recherche Graph Memory, hygiène de consolidation |
+| `boilerplate/DESIGN/AGENTIC_RULES/WORKFLOW_ENGINEERING.md` | Cycle engineering : plan, implémentation, review adversariale, tests non complaisants |
+| `boilerplate/DESIGN/AGENTIC_RULES/WORKFLOW_GIT.md` | Branches, issues, PR, liens `Closes #N`, séparation issue/PR |
+| `boilerplate/DESIGN/AGENTIC_RULES/WORKFLOW_GIT_EPIC.md` | Pilotage EPIC, RC flow, statuts Project, gates humains |
 
 Le template avancé sépare explicitement trois sources de vérité :
 

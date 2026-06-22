@@ -7,7 +7,7 @@ own mechanics:
 - `WORKFLOW_GIT.md` — branches, commits, PR/issue lifecycle, publishing a review.
 - `WORKFLOW_GIT_EPIC.md` — project board, integration/release flow, status model,
   the pilot/reviewer principle, protection of the default/release branch.
-- `WORKSPACE_CLINE_ADVANCE_RULES.md` — memory bank protocol.
+- `WORKSPACE_ADVANCE_RULES.md` — memory bank protocol.
 
 Those files own VCS, board and memory. **This file owns the engineering
 discipline**: the adversarial review cycle, the reviewer invocation, the test
