@@ -5,7 +5,10 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ---
 
-## [Unreleased]
+## [1.2.1] — 2026-06-22
+
+Cette version patch finalise les templates de règles agentiques livrés aux
+projets générés depuis le starter-kit.
 
 ### Changed
 - Généralisation des templates `DESIGN/AGENTIC_RULES/` :

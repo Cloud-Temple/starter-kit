@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## v1.2.1 — 2026-06-22 — Generic agentic rules templates
+
+This patch release cleans up and finalizes the generated-project agentic rule
+templates introduced in v1.2.0.
 
 ### Changed
 

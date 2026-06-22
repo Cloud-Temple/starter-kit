@@ -695,7 +695,7 @@ boilerplate/
 ├── requirements.txt         # mcp, uvicorn, boto3, click, rich, httpx
 ├── .env.example             # Variables d'environnement documentées
 ├── .gitignore               # Python, IDE, OS, secrets
-├── VERSION                  # 1.2.0
+├── VERSION                  # 1.2.1
 └── README.md                # Guide de démarrage rapide
 ```
 
