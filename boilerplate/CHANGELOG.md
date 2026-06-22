@@ -13,7 +13,8 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
   - modèle EPIC générique avec issues enfants et PR reliées ;
   - clarification des champs Project configurables par projet ;
   - wording Live Memory / Graph Memory rendu indépendant du workspace source.
-- Ajout de `MAIN_RULES.md` comme point d'entrée anglais des règles projet.
+- Ajout de `DESIGN/AGENTIC_RULES/MAIN_RULES.md` comme point d'entrée anglais
+  des règles projet.
 - Renommage du template mémoire workspace pour supprimer la mention d'un outil
   agentique spécifique.
 

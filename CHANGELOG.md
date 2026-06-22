@@ -7,8 +7,8 @@
 - Generalized the `boilerplate/DESIGN/AGENTIC_RULES/WORKFLOW_GIT_EPIC.md`
   template by removing Terraform-provider-specific wording and strengthening
   EPIC -> child issue -> PR traceability rules.
-- Added `boilerplate/MAIN_RULES.md` as the English entrypoint for generated
-  project rules.
+- Added `boilerplate/DESIGN/AGENTIC_RULES/MAIN_RULES.md` as the English
+  entrypoint for generated project rules.
 - Replaced remaining provider-specific references in the generated project
   Git and memory rule templates with project-generic wording, and renamed the
   workspace memory template to remove tool-specific naming.

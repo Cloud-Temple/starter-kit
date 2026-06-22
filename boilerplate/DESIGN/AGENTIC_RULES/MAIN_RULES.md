@@ -2,17 +2,17 @@
 
 > **Read this file first, at the beginning of every session and every task.**
 > This file is the authoritative entrypoint. It does not replace the detailed
-> rules: read every file in `DESIGN/AGENTIC_RULES/` before starting work.
+> rules: read every file in this directory before starting work.
 
 ## Rule Index
 
 | File | Scope |
 | ---- | ----- |
 | `MAIN_RULES.md` *(this file)* | Non-negotiable obligations and rule index |
-| `DESIGN/AGENTIC_RULES/WORKSPACE_ADVANCE_RULES.md` | Persistent memory, Live Memory, Graph Memory, bank hygiene |
-| `DESIGN/AGENTIC_RULES/WORKFLOW_ENGINEERING.md` | Engineering discipline, adversarial review, test rigor, human gates |
-| `DESIGN/AGENTIC_RULES/WORKFLOW_GIT.md` | Git workflow, PR to main, issue links, PR review process |
-| `DESIGN/AGENTIC_RULES/WORKFLOW_GIT_EPIC.md` | EPIC piloting, GitHub Project v2, statuses, fields, release traceability |
+| `WORKSPACE_ADVANCE_RULES.md` | Persistent memory, Live Memory, Graph Memory, bank hygiene |
+| `WORKFLOW_ENGINEERING.md` | Engineering discipline, adversarial review, test rigor, human gates |
+| `WORKFLOW_GIT.md` | Git workflow, PR to main, issue links, PR review process |
+| `WORKFLOW_GIT_EPIC.md` | EPIC piloting, GitHub Project v2, statuses, fields, release traceability |
 
 ## Non-Negotiable Obligations
 
