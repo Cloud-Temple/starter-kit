@@ -103,10 +103,28 @@ function closeModal(id) {
     if (el) el.classList.remove('active');
 }
 
-// Fermer un modal en cliquant sur son fond (overlay)
+// Délégation d'événements : navigation (data-page) + actions (data-action).
+// Remplace les handlers inline `onclick=` (incompatibles avec une CSP stricte
+// `script-src 'self'`, qui est notre filet anti-XSS).
 document.addEventListener('click', e => {
+    // Fermeture d'un modal en cliquant sur son fond (overlay)
     if (e.target.classList.contains('modal-overlay')) {
         e.target.classList.remove('active');
+        return;
+    }
+    // Navigation sidebar
+    const nav = e.target.closest('[data-page]');
+    if (nav) { showPage(nav.dataset.page); return; }
+    // Actions déclaratives
+    const act = e.target.closest('[data-action]');
+    if (!act) return;
+    switch (act.dataset.action) {
+        case 'logout': logout(); break;
+        case 'openCreateToken': openCreateToken(); break;
+        case 'doCreateToken': doCreateToken(); break;
+        case 'copyToken': copyToken(); break;
+        case 'closeModal': closeModal(act.dataset.arg); break;
+        case 'revokeToken': revokeToken(act.dataset.hash); break;
     }
 });
 

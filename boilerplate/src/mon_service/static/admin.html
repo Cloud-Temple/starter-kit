@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cloud Temple — Admin Console</title>
+    <link rel="icon" href="/admin/static/img/logo-ct.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/admin/static/css/admin.css">
 </head>
 <body>
@@ -44,7 +45,7 @@
         <div class="header-right">
             <span id="headerUser" class="header-user"></span>
             <span id="headerVersion" class="header-version"></span>
-            <button class="btn-logout" onclick="logout()" title="Déconnexion">🔓</button>
+            <button class="btn-logout" data-action="logout" title="Déconnexion">🔓</button>
         </div>
     </div>
 
@@ -57,20 +58,20 @@
             <div class="sidebar-nav" id="sidebarNav">
 
                 <!-- Pages système (toujours présentes) -->
-                <button onclick="showPage('dashboard')" class="active" data-page="dashboard">
+                <button class="active" data-page="dashboard">
                     <span>📊</span><span>Dashboard</span>
                 </button>
-                <button onclick="showPage('tokens')" data-page="tokens">
+                <button data-page="tokens">
                     <span>🔑</span><span>Tokens</span>
                 </button>
-                <button onclick="showPage('activity')" data-page="activity">
+                <button data-page="activity">
                     <span>📋</span><span>Activité</span>
                 </button>
 
                 <!-- ═══ AJOUTER VOS PAGES MÉTIER ICI ═══ -->
                 <!--
                 <div class="sidebar-section">Mon Service</div>
-                <button onclick="showPage('ma-ressource')" data-page="ma-ressource">
+                <button data-page="ma-ressource">
                     <span>🗄️</span><span>Ma ressource</span>
                 </button>
                 -->
@@ -133,8 +134,8 @@
         </div>
 
         <div class="modal-actions">
-            <button class="btn btn-ghost" onclick="closeModal('modalCreateToken')">Annuler</button>
-            <button class="btn btn-primary" onclick="doCreateToken()">Créer le token</button>
+            <button class="btn btn-ghost" data-action="closeModal" data-arg="modalCreateToken">Annuler</button>
+            <button class="btn btn-primary" data-action="doCreateToken">Créer le token</button>
         </div>
     </div>
 </div>
@@ -152,13 +153,13 @@
         </p>
         <div class="token-display">
             <span id="tokenResultValue"></span>
-            <button class="copy-btn" onclick="copyToken()">Copier</button>
+            <button class="copy-btn" data-action="copyToken">Copier</button>
         </div>
         <div id="tokenResultMeta"
              style="font-size: 0.8rem; color: var(--text2); margin-top: 0.4rem;">
         </div>
         <div class="modal-actions">
-            <button class="btn btn-primary" onclick="closeModal('modalTokenResult')">
+            <button class="btn btn-primary" data-action="closeModal" data-arg="modalTokenResult">
                 ✓ J'ai sauvegardé le token
             </button>
         </div>

@@ -2,68 +2,93 @@
  * tokens.js — Gestion des tokens d'accès.
  *
  * Liste, création et révocation des tokens via l'API admin.
- * Dépend de : config.js, api.js, app.js (openModal/closeModal)
+ * Rendu via createElement + textContent (helper `el` de config.js) : les champs
+ * de token (client_name, email…) sont saisis par l'utilisateur → jamais injectés
+ * en innerHTML. Les actions (révoquer / nouveau) passent par `data-action`
+ * (délégation dans app.js), pas par des handlers inline (compatibles CSP stricte).
+ * Dépend de : config.js (el, apiGet…), app.js (openModal/closeModal)
  */
 
 async function loadTokens() {
     const div = document.getElementById('page-tokens');
-    div.innerHTML = '<p class="muted" style="padding:1rem">Chargement…</p>';
+    div.replaceChildren(el('p', 'muted', 'Chargement…'));
 
     const d = await apiGet('/tokens');
 
-    let tableHtml = '';
-    if (!d.tokens || d.tokens.length === 0) {
-        tableHtml = '<p class="empty-state">Aucun token (S3 non configuré ou liste vide)</p>';
+    // En-tête + bouton "Nouveau token" (action déléguée, pas d'onclick inline)
+    const header = el('div', 'flex-between mb-1');
+    header.appendChild(el('h2', 'page-title', "🔑 Tokens d'accès"));
+    const newBtn = el('button', 'btn btn-primary', '+ Nouveau token');
+    newBtn.dataset.action = 'openCreateToken';
+    header.appendChild(newBtn);
+
+    const card = el('div', 'card');
+
+    if (d && d.status === 'error') {
+        card.appendChild(el('p', 'empty-state', `Erreur : ${d.message || 'inconnue'}`));
+    } else if (!d || !Array.isArray(d.tokens) || d.tokens.length === 0) {
+        card.appendChild(el('p', 'empty-state', 'Aucun token (S3 non configuré ou liste vide)'));
     } else {
-        const rows = d.tokens.map(t => {
-            const status = t.revoked
-                ? '<span class="badge badge-err">Révoqué</span>'
-                : '<span class="badge badge-ok">Actif</span>';
-            const perms = (t.permissions || []).join(', ');
-            const hash = (t.hash_prefix || '?').substring(0, 12);
-            const exp = t.expires_at
-                ? t.expires_at.substring(0, 10)
-                : '<span class="muted">jamais</span>';
-            const email = t.email || '<span class="muted">—</span>';
-            const revokeBtn = !t.revoked
-                ? `<button class="btn btn-danger btn-sm" onclick="revokeToken('${t.hash_prefix}')">Révoquer</button>`
-                : '';
-
-            return `<tr>
-                <td><strong>${t.client_name || '?'}</strong></td>
-                <td>${email}</td>
-                <td>${perms}</td>
-                <td><code style="font-size:0.75rem; color:var(--muted)">${hash}…</code></td>
-                <td>${exp}</td>
-                <td>${status}</td>
-                <td>${revokeBtn}</td>
-            </tr>`;
-        }).join('');
-
-        tableHtml = `
-            <table>
-                <thead>
-                    <tr>
-                        <th>Client</th>
-                        <th>Email</th>
-                        <th>Permissions</th>
-                        <th>Hash</th>
-                        <th>Expiration</th>
-                        <th>Statut</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>${rows}</tbody>
-            </table>`;
+        card.appendChild(_buildTokenTable(d.tokens));
     }
 
-    div.innerHTML = `
-        <div class="flex-between mb-1">
-            <h2 class="page-title">🔑 Tokens d'accès</h2>
-            <button class="btn btn-primary" onclick="openCreateToken()">+ Nouveau token</button>
-        </div>
-        <div class="card">${tableHtml}</div>
-    `;
+    div.replaceChildren(header, card);
+}
+
+/** Construit le tableau des tokens en DOM (aucune interpolation HTML). */
+function _buildTokenTable(tokens) {
+    const table = el('table');
+    const thead = el('thead');
+    const htr = el('tr');
+    ['Client', 'Email', 'Permissions', 'Hash', 'Expiration', 'Statut', 'Actions']
+        .forEach(h => htr.appendChild(el('th', null, h)));
+    thead.appendChild(htr);
+    table.appendChild(thead);
+
+    const tbody = el('tbody');
+    tokens.forEach(t => {
+        try {
+            tbody.appendChild(_buildTokenRow(t));
+        } catch (_e) {
+            // garde par-ligne : un token malformé n'efface pas tout le tableau
+        }
+    });
+    table.appendChild(tbody);
+    return table;
+}
+
+function _buildTokenRow(t) {
+    const tr = el('tr');
+
+    const tdClient = el('td');
+    tdClient.appendChild(el('strong', null, t.client_name || '?'));
+    tr.appendChild(tdClient);
+
+    tr.appendChild(el('td', null, t.email || '—'));
+    tr.appendChild(el('td', null, (t.permissions || []).join(', ')));
+
+    const tdHash = el('td');
+    tdHash.appendChild(el('code', 'mono-sm', `${(t.hash_prefix || '?').substring(0, 12)}…`));
+    tr.appendChild(tdHash);
+
+    tr.appendChild(el('td', null, t.expires_at ? t.expires_at.substring(0, 10) : 'jamais'));
+
+    const tdStatus = el('td');
+    tdStatus.appendChild(t.revoked
+        ? el('span', 'badge badge-err', 'Révoqué')
+        : el('span', 'badge badge-ok', 'Actif'));
+    tr.appendChild(tdStatus);
+
+    const tdAction = el('td');
+    if (!t.revoked && t.hash_prefix) {
+        const btn = el('button', 'btn btn-danger btn-sm', 'Révoquer');
+        btn.dataset.action = 'revokeToken';
+        btn.dataset.hash = t.hash_prefix;   // dataset = valeur littérale, jamais exécutée
+        tdAction.appendChild(btn);
+    }
+    tr.appendChild(tdAction);
+
+    return tr;
 }
 
 /**
@@ -102,7 +127,7 @@ async function doCreateToken() {
     closeModal('modalCreateToken');
 
     if (result.raw_token) {
-        // Afficher le token dans le modal de résultat
+        // Afficher le token dans le modal de résultat (textContent → safe)
         document.getElementById('tokenResultValue').textContent = result.raw_token;
         const meta = [
             `Client : ${result.client_name || name}`,

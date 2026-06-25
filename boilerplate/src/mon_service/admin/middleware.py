@@ -25,6 +25,21 @@ class AdminMiddleware:
         Tout le reste           → Passe au middleware suivant (MCP)
     """
 
+    # En-têtes de sécurité de la console admin.
+    # CSP : `script-src 'self'` interdit tout script/handler INLINE (onerror=,
+    # onclick=…) → neutralise le XSS stocké même si une donnée non échappée
+    # passait (defense-in-depth). Possible car la console n'utilise plus de
+    # handlers inline (délégation data-action). `style-src` garde 'unsafe-inline'
+    # (styles inline résiduels ; risque CSS très inférieur au script).
+    _SECURITY_HEADERS = [
+        (b"content-security-policy",
+         b"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+         b"img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"),
+        (b"x-content-type-options", b"nosniff"),
+        (b"x-frame-options", b"DENY"),
+        (b"referrer-policy", b"no-referrer"),
+    ]
+
     def __init__(self, app, mcp_instance=None):
         self.app = app
         self.mcp = mcp_instance
@@ -93,6 +108,7 @@ class AdminMiddleware:
                 (b"content-type", content_type.encode()),
                 (b"content-length", str(len(body)).encode()),
                 (b"cache-control", b"no-cache"),
+                *self._SECURITY_HEADERS,
             ],
         })
         await send({"type": "http.response.body", "body": body})
