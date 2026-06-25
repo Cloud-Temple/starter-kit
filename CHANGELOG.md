@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — Admin console activity and rendering hardening
+## v1.2.2 — 2026-06-25 — Admin console activity and rendering hardening
 
 ### Fixed
 

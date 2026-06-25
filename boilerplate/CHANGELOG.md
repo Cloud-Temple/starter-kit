@@ -5,7 +5,7 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ---
 
-## [Unreleased]
+## [1.2.2] — 2026-06-25
 
 ### Fixed
 - Fixed the admin Activity page rendering failure caused by numeric ring-buffer
