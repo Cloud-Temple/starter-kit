@@ -57,7 +57,11 @@
 	# Headers de Sécurité (appliqués à TOUTES les routes)
 	# =========================================================================
 	header {
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'"
+		# script-src 'self' SANS 'unsafe-inline' ni CDN : bloque tout script/handler
+		# inline (onerror=, onclick=…) → neutralise le XSS au niveau navigateur.
+		# Possible car la console admin est 100 % self (plus de handlers inline ni
+		# de CDN). Un service dérivé qui aurait besoin d'un CDN l'ajoute explicitement.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
 		X-Frame-Options "DENY"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
