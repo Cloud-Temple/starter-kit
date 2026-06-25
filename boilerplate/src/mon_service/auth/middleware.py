@@ -11,6 +11,7 @@ import time
 import hmac
 import hashlib
 import collections
+from datetime import datetime, timezone
 from typing import Optional
 from .context import current_mission_context, current_token_info, mission_context_to_token_info
 from .token_store import get_token_store
@@ -180,13 +181,16 @@ class LoggingMiddleware:
         finally:
             elapsed = round((time.monotonic() - t0) * 1000, 1)
 
-            # Stocker dans le ring buffer (toutes les requêtes)
+            # Stocker dans le ring buffer (toutes les requêtes).
+            # Timestamp en ISO 8601 UTC (et non un epoch) : c'est le contrat
+            # attendu par le front (parsing 'YYYY-MM-DDTHH:MM:SS'). Émettre un
+            # float epoch cassait le rendu de la page Activité.
             _activity_log.append({
                 "method": method,
                 "path": path,
                 "status": status_code,
                 "duration_ms": elapsed,
-                "timestamp": time.time(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
             # Log stderr (sauf health checks pour éviter le bruit)

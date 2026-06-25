@@ -134,6 +134,28 @@ Chaque serveur MCP inclut une console admin web avec :
 
 Design Cloud Temple : dark theme `#0f0f23`, accent teal `#41a890`.
 
+### 2.3.1 Admin / MCP / Click / Shell contract
+
+The starter-kit keeps a strict separation between runtime surfaces:
+
+| Surface | Endpoint / file | Contract |
+| ------- | --------------- | -------- |
+| MCP tools | `/mcp`, `server.py` | Business tools and safe system tools only. |
+| Admin web console | `/admin`, `static/js/*.js` | Human administration, rendered with DOM APIs and `textContent` for dynamic values. |
+| Admin REST API | `/admin/api/*` | Token administration, health, identity, branding and activity logs. |
+| Click CLI | `scripts/cli/commands.py` | Scriptable client for MCP tools; token commands call REST `/admin/api/*`. |
+| Interactive shell | `scripts/cli/shell.py` | Exploratory client; token commands also call REST `/admin/api/*`. |
+
+Token administration must not be exposed as a MCP tool named `token`. Click and
+shell token commands use the admin REST API so `/mcp` stays focused on agent
+business capabilities.
+
+The admin Activity page expects ISO 8601 UTC timestamps from the logging ring
+buffer. The admin frontend renders request paths, token metadata and other
+dynamic values via `textContent`, not HTML interpolation. The app and WAF CSP use
+`script-src 'self'` without inline event handlers; custom admin pages should use
+`data-action` / delegated listeners instead of `onclick=`.
+
 ### 2.4 Pourquoi ces choix ?
 
 | Couche         | Consommateur                          | Usage                       |
@@ -695,7 +717,7 @@ boilerplate/
 ├── requirements.txt         # mcp, uvicorn, boto3, click, rich, httpx
 ├── .env.example             # Variables d'environnement documentées
 ├── .gitignore               # Python, IDE, OS, secrets
-├── VERSION                  # 1.2.1
+├── VERSION                  # 1.2.2
 └── README.md                # Guide de démarrage rapide
 ```
 

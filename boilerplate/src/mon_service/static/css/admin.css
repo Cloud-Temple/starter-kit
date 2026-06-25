@@ -298,3 +298,6 @@ label { display: block; color: var(--text2); font-size: 0.8rem; margin-bottom: 0
     .form-row { grid-template-columns: 1fr; }
     .stats-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* code hash compact (remplace styles inline, compat CSP) */
+.mono-sm { font-size: 0.75rem; color: var(--muted, var(--text2)); }

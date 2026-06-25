@@ -21,3 +21,19 @@ function headers() {
         'Content-Type': 'application/json',
     };
 }
+
+/**
+ * Crée un élément DOM. Le texte est posé via `textContent` → jamais interprété
+ * comme HTML. Utiliser ce helper (et non `innerHTML` + interpolation) pour rendre
+ * des données dynamiques : élimine la classe XSS par construction.
+ *
+ * @param {string} tag        - nom de balise (ex. 'div', 'span')
+ * @param {string} [className] - classes CSS
+ * @param {*} [text]          - contenu texte (converti en String, jamais en HTML)
+ */
+function el(tag, className, text) {
+    const e = document.createElement(tag);
+    if (className) e.className = className;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+}

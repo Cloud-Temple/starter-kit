@@ -2,16 +2,22 @@
  * dashboard.js — Page Dashboard de la console admin.
  *
  * Affiche l'état de santé du service, la version, les outils disponibles.
- * Dépend de : config.js, api.js
+ * Rendu via createElement + textContent (helper `el` de config.js) — cohérent
+ * avec activity.js/tokens.js : aucune interpolation de données en innerHTML.
+ * Dépend de : config.js (el, apiGet…)
  */
 
 async function loadDashboard() {
     const div = document.getElementById('page-dashboard');
-    div.innerHTML = '<p class="muted" style="padding:1rem">Chargement…</p>';
+    div.replaceChildren(el('p', 'muted', 'Chargement…'));
 
     const d = await apiGet('/health');
-    if (d.status === 'error') {
-        div.innerHTML = `<div class="card"><p style="color:var(--danger)">❌ ${d.message}</p></div>`;
+    if (!d || d.status === 'error') {
+        const card = el('div', 'card');
+        const p = el('p', null, `❌ ${(d && d.message) || 'Service indisponible'}`);
+        p.style.color = 'var(--danger)';
+        card.appendChild(p);
+        div.replaceChildren(card);
         return;
     }
 
@@ -21,65 +27,79 @@ async function loadDashboard() {
     const versionEl = document.getElementById('headerVersion');
     if (versionEl) versionEl.textContent = `v${d.version || 'dev'}`;
 
-    // Badge S3
-    const s3Badge = d.s3_configured
-        ? '<span class="badge badge-ok">✅ Configuré</span>'
-        : '<span class="badge badge-warn">⚠️ Non configuré</span>';
+    div.replaceChildren();
+    div.appendChild(el('h2', 'page-title', '📊 Dashboard'));
 
-    // Liste des outils
-    const toolsHtml = (d.tools && d.tools.length)
-        ? d.tools.map(t => `<span class="tool-tag">${t}</span>`).join('')
-        : '<span class="muted">Aucun outil enregistré</span>';
+    // Cartes de stats
+    const grid = el('div', 'stats-grid');
+    grid.appendChild(_statCard(d.tools_count || 0, 'Outils MCP'));
+    grid.appendChild(_statCard(d.version || 'dev', 'Version'));
+    const s3card = _statCard(d.s3_configured ? '✅' : '⚠️', 'S3 Token Store');
+    s3card.querySelector('.stat-value').style.fontSize = '1.2rem';
+    grid.appendChild(s3card);
+    div.appendChild(grid);
 
-    div.innerHTML = `
-        <h2 class="page-title">📊 Dashboard</h2>
+    // État du service
+    const card = el('div', 'card');
+    card.appendChild(el('h2', null, 'État du service'));
+    const table = el('table');
+    table.appendChild(_kvRow('Service', d.service_name || '?', true));
+    table.appendChild(_kvRow('Version', d.version || '?'));
+    table.appendChild(_kvRow('Python', d.python_version || '?'));
 
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-value">${d.tools_count || 0}</div>
-                <div class="stat-label">Outils MCP</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">${d.version || 'dev'}</div>
-                <div class="stat-label">Version</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" style="font-size:1.2rem">
-                    ${d.s3_configured ? '✅' : '⚠️'}
-                </div>
-                <div class="stat-label">S3 Token Store</div>
-            </div>
-        </div>
+    const s3Row = el('tr');
+    s3Row.appendChild(_kvLabel('S3'));
+    const s3td = el('td');
+    s3td.appendChild(d.s3_configured
+        ? el('span', 'badge badge-ok', '✅ Configuré')
+        : el('span', 'badge badge-warn', '⚠️ Non configuré'));
+    s3Row.appendChild(s3td);
+    table.appendChild(s3Row);
 
-        <div class="card">
-            <h2>État du service</h2>
-            <table>
-                <tr>
-                    <td style="color:var(--text2); width:140px">Service</td>
-                    <td><strong>${d.service_name || '?'}</strong></td>
-                </tr>
-                <tr>
-                    <td style="color:var(--text2)">Version</td>
-                    <td>${d.version || '?'}</td>
-                </tr>
-                <tr>
-                    <td style="color:var(--text2)">Python</td>
-                    <td>${d.python_version || '?'}</td>
-                </tr>
-                <tr>
-                    <td style="color:var(--text2)">S3</td>
-                    <td>${s3Badge}</td>
-                </tr>
-                <tr>
-                    <td style="color:var(--text2)">Statut</td>
-                    <td><span class="badge badge-ok">✅ En ligne</span></td>
-                </tr>
-            </table>
-        </div>
+    const stRow = el('tr');
+    stRow.appendChild(_kvLabel('Statut'));
+    const sttd = el('td');
+    sttd.appendChild(el('span', 'badge badge-ok', '✅ En ligne'));
+    stRow.appendChild(sttd);
+    table.appendChild(stRow);
 
-        <div class="card mt-1">
-            <h2>🔧 Outils MCP (${d.tools_count || 0})</h2>
-            <div class="tools-list">${toolsHtml}</div>
-        </div>
-    `;
+    card.appendChild(table);
+    div.appendChild(card);
+
+    // Outils MCP
+    const toolsCard = el('div', 'card mt-1');
+    toolsCard.appendChild(el('h2', null, `🔧 Outils MCP (${d.tools_count || 0})`));
+    const list = el('div', 'tools-list');
+    const tools = Array.isArray(d.tools) ? d.tools : [];
+    if (tools.length) {
+        tools.forEach(t => list.appendChild(
+            el('span', 'tool-tag', typeof t === 'string' ? t : (t && t.name) || String(t))));
+    } else {
+        list.appendChild(el('span', 'muted', 'Aucun outil enregistré'));
+    }
+    toolsCard.appendChild(list);
+    div.appendChild(toolsCard);
+}
+
+function _statCard(value, label) {
+    const c = el('div', 'stat-card');
+    c.appendChild(el('div', 'stat-value', value));
+    c.appendChild(el('div', 'stat-label', label));
+    return c;
+}
+
+function _kvLabel(text) {
+    const td = el('td', null, text);
+    td.style.color = 'var(--text2)';
+    return td;
+}
+
+function _kvRow(label, value, strong) {
+    const tr = el('tr');
+    tr.appendChild(_kvLabel(label));
+    const td = el('td');
+    if (strong) td.appendChild(el('strong', null, value));
+    else td.textContent = String(value);
+    tr.appendChild(td);
+    return tr;
 }

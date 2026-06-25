@@ -53,6 +53,22 @@ Toute fonctionnalité doit être exposée dans les 3 couches :
 | **CLI Click** | `scripts/cli/commands.py` | DevOps, scripts CI/CD |
 | **Shell interactif** | `scripts/cli/shell.py` | Exploration interactive |
 
+### Admin / MCP / Click / Shell boundary
+
+Administration and business tools are intentionally separated:
+
+| Surface | Boundary |
+|---------|----------|
+| `/mcp` | Business tools and safe system tools exposed to MCP clients. |
+| `/admin/api/*` | Server administration: tokens, health, identity, branding and activity logs. |
+| Click CLI | Uses MCP tool calls for system/business commands; token commands call `/admin/api/*`. |
+| Interactive shell | Same contract as Click; token commands call `/admin/api/*`. |
+| `/admin` web console | Human administration UI backed by `/admin/api/*`. |
+
+There must be no MCP tool named `token` for token administration. Keeping token
+CRUD under REST `/admin/api/*` avoids exposing server administration as an agent
+business capability.
+
 ---
 
 ## Authentification
@@ -164,6 +180,8 @@ de vérité.
 | mission_token validé mais outils anonymes | Pont ContextVar mission dans `AuthMiddleware` |
 | Body trop volumineux (OOM) | `_MAX_BODY_SIZE = 10 MB` |
 | CORS wildcard sur l'admin | Same-origin, pas d'`Access-Control-Allow-Origin: *` |
+| XSS via admin dynamic values | DOM `textContent`, delegated actions, strict `script-src 'self'` CSP |
+| Activity page blank render | ISO 8601 UTC timestamps in the logging ring buffer |
 | Hash prefix trop court → collision | Min 8 caractères pour revoke |
 | Bootstrap key par défaut en prod | Warning au démarrage |
 | LoggingMiddleware en innermost | Placé outermost (premier exécuté) |

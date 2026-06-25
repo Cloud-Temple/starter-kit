@@ -181,6 +181,39 @@ class TestShellTokenRest:
             "allowed_resources": ["prod-a"],
         }
 
+    def test_shell_token_update_accepts_resources_alias(self, admin_calls):
+        client = MCPClient("http://localhost:8002", "admin-token")
+
+        asyncio.run(cmd_token(
+            client,
+            {},
+            "update abcdef123456 --permissions read --resources prod-a,prod-b",
+            json_output=True,
+        ))
+
+        call = admin_calls[0]
+        assert call["method"] == "PUT"
+        assert call["path"] == "/tokens/abcdef123456"
+        assert call["json_body"] == {
+            "permissions": ["read"],
+            "allowed_resources": ["prod-a", "prod-b"],
+        }
+
+    def test_shell_token_update_permissions_only_uses_admin_rest(self, admin_calls):
+        client = MCPClient("http://localhost:8002", "admin-token")
+
+        asyncio.run(cmd_token(
+            client,
+            {},
+            "update abcdef123456 --permissions read",
+            json_output=True,
+        ))
+
+        call = admin_calls[0]
+        assert call["method"] == "PUT"
+        assert call["path"] == "/tokens/abcdef123456"
+        assert call["json_body"] == {"permissions": ["read"]}
+
 
 def test_no_cli_or_shell_token_admin_uses_mcp_tool():
     """Static non-regression: token admin must not use call_tool('token')."""
