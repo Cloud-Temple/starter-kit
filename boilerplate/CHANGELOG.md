@@ -5,6 +5,34 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- Fixed the admin Activity page rendering failure caused by numeric ring-buffer
+  timestamps while the frontend expected ISO 8601 strings.
+- Fixed the interactive shell `token update --resources ...` alias so it matches
+  the Click CLI behavior and no longer depends on the legacy `--vaults` spelling.
+
+### Changed
+- Hardened admin console rendering by moving dynamic values to DOM
+  `textContent` instead of HTML interpolation.
+- Replaced inline admin UI event handlers with delegated `data-action` /
+  `data-page` handlers so the console can run under a strict script CSP.
+- Tightened the app and WAF Content Security Policy to use `script-src 'self'`
+  without `unsafe-inline` or CDN script sources.
+
+### Tests
+- Added regression coverage for ISO 8601 UTC activity timestamps, strict admin
+  and WAF CSP, absence of inline handlers / obvious HTML injection sinks, and
+  Click CLI / interactive shell token administration through REST `/admin/api/*`.
+
+### Documentation
+- Documented the admin / MCP / Click CLI / interactive shell contract:
+  `/mcp` remains for business and safe system tools, while token administration
+  stays under REST `/admin/api/*`.
+
+---
+
 ## [1.2.1] — 2026-06-22
 
 Cette version patch finalise les templates de règles agentiques livrés aux

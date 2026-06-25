@@ -164,8 +164,8 @@ async def cmd_token(client: MCPClient, state: dict, args: str = "",
             if update_parts[i] == "--permissions" and i + 1 < len(update_parts):
                 permissions = update_parts[i + 1]
                 i += 2
-            elif update_parts[i] == "--vaults" and i + 1 < len(update_parts):
-                vaults = update_parts[i + 1]
+            elif update_parts[i] in ("--resources", "--vaults") and i + 1 < len(update_parts):
+                resources = update_parts[i + 1]
                 i += 2
             else:
                 i += 1
@@ -173,8 +173,8 @@ async def cmd_token(client: MCPClient, state: dict, args: str = "",
         payload = {}
         if permissions:
             payload["permissions"] = [p.strip() for p in permissions.split(",") if p.strip()]
-        if vaults:
-            payload["allowed_resources"] = [v.strip() for v in vaults.split(",") if v.strip()]
+        if resources:
+            payload["allowed_resources"] = [v.strip() for v in resources.split(",") if v.strip()]
 
         result = await client.call_admin_api("PUT", f"/tokens/{hash_prefix}", payload)
         if json_output:

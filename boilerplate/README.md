@@ -188,6 +188,28 @@ boilerplate/
 | `DELETE`  | `/admin/api/tokens/{hash}`      | Révoquer un token              | Admin   |
 | `GET`     | `/admin/api/logs`               | Activité récente (50 dernières)| Admin   |
 
+### Admin / MCP / Click / Shell contract
+
+The generated service keeps a strict separation between runtime surfaces:
+
+| Surface | Endpoint / file | Contract |
+| ------- | --------------- | -------- |
+| MCP tools | `/mcp`, `src/mon_service/server.py` | Business tools and safe system tools only. |
+| Admin web console | `/admin`, `src/mon_service/static/js/*.js` | Human administration, rendered with DOM APIs and `textContent` for dynamic values. |
+| Admin REST API | `/admin/api/*` | Token administration, health, identity, branding and activity logs. |
+| Click CLI | `scripts/cli/commands.py` | Scriptable client for MCP tools; token commands call REST `/admin/api/*`. |
+| Interactive shell | `scripts/cli/shell.py` | Exploratory client; token commands also call REST `/admin/api/*`. |
+
+Token administration must not be exposed as a MCP tool named `token`. Click CLI
+and interactive shell token commands use the admin REST API so `/mcp` stays
+focused on agent business capabilities.
+
+The admin Activity page expects ISO 8601 UTC timestamps from the logging ring
+buffer. The admin frontend renders request paths, token metadata and other
+dynamic values via `textContent`, not HTML interpolation. The app and WAF CSP use
+`script-src 'self'` without inline event handlers; custom admin pages should use
+`data-action` / delegated listeners instead of `onclick=`.
+
 ---
 
 ## Ajouter un outil métier
@@ -250,10 +272,18 @@ La console `/admin` inclut :
 - **Tokens** : liste avec statut, création (modal), révocation
 - **Activité** : ring buffer des requêtes, auto-refresh 5s
 
+Security baseline:
+- activity log timestamps are emitted as ISO 8601 UTC strings;
+- request paths and token metadata are rendered with `textContent`;
+- admin navigation and actions use delegated `data-page` / `data-action`
+  handlers, not inline `onclick=`;
+- the app and WAF CSP keep `script-src 'self'`.
+
 Pour ajouter une page métier :
-1. Ajouter un `<button>` dans la sidebar (`admin.html`)
+1. Ajouter un `<button data-page="ma-page">` dans la sidebar (`admin.html`)
 2. Ajouter un `<div id="page-ma-page">` dans la zone de contenu
-3. Créer `static/js/ma-page.js` avec `async function loadMaPage()`
+3. Créer `static/js/ma-page.js` avec `async function loadMaPage()` et rendre les
+   données dynamiques via `textContent`
 4. Ajouter `else if (name === 'ma-page') loadMaPage()` dans `app.js`
 5. Ajouter `<script src="...ma-page.js"></script>` dans `admin.html`
 
