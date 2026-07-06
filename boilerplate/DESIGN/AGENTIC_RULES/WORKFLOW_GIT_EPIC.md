@@ -570,3 +570,106 @@ Rules:
 - inactive private drafts must be in `Todo`;
 - if more than a few non-scoping items appear in `Plan`, fix it before adding a
   new lot.
+
+## Dashboard sync — end-of-task PRIORITY 
+
+The GitHub Project dashboard is the PO's primary situational awareness surface.
+The pilot MUST update it as the **last mandatory step of every substantive
+task** — before returning to the PO, before starting the next task, before
+declaring anything "done".
+
+**Substantive task** = any of:
+- PR merged to `main`;
+- New issue created that the pilot will work on (or that awaits PO
+  arbitration);
+- Sub-mission started, blocked, or completed;
+- Parent EPIC state change (a child lot flipping from `in progress` to
+  `merged`, a dependency lifted, a scope shift).
+
+### Mandatory end-of-task checklist
+
+1. **Every substantive task must have a visible item on the Project board.**
+   If it does not, add it immediately. No sub-mission tracked only in local
+   notes, in Live Memory, or in the PO's head.
+
+2. **Every item on the board must have its five custom fields set** :
+   `Status`, `Item Type`, `Lot`, `Priority`, `Risk`. An unset field on a
+   substantive item is a defect — the item reads as noise until fixed.
+
+2 bis. **Verify state BEFORE setting Status — never assume from the title.**
+   When adding an EXISTING issue/PR to the board (as opposed to a brand-new
+   one you just created), the pilot MUST verify its real state via
+   `gh issue view <n>` or `gh pr view <n>` before assigning `Status`. An
+   `[EPIC]` in the title does not mean the epic is open. A "in progress"
+   inline text does not mean the issue is still open. Only the true GitHub
+   state field is authoritative.
+
+   Explicit mapping the pilot MUST apply:
+   - real state `closed` (issue) or `merged` (PR) → **Status=Done**, no
+     exception, no matter what the title, body or a stale comment says.
+   - real state `open` and no active branch/PR → likely `Todo` or `Plan`
+     (never `In Progress` without evidence of active work).
+   - real state `open` with an active PR → `In Progress` or `Review`.
+   - explicit PO gate awaited (visible in issue body) → `Blocked`.
+
+   *Reason for this rule* : on 2026-07-06, the pilot added issue #201 to
+   the board with `Status=In Progress` while the issue had been closed
+   for five days (PR #348 merged 01/07). The board misinformed the PO for
+   an entire session. The autonomous audit that flagged the drift ran
+   AFTER the PO noticed — a review step that runs after PO notice is a
+   detection tool, not a prevention tool.
+
+3. **Waiting-for-PO items must be `Status=Blocked` with a clear reason in the
+   issue body.** Never leave a PO-arbitration item in `Todo` — the PO cannot
+   distinguish it from work the pilot could start alone.
+
+4. **Merged PRs must land on the board with `Status=Done`** immediately after
+   `gh pr merge` — no batching, no "I'll do it later" (the rule is graven from
+   PO instruction 05/07: *"arretes de laisser de la crotte sur le dashboard"*).
+
+5. **Parent EPIC bodies must reflect git reality.** When a child lot is
+   merged, tick the `[x]` box and update the inline status text and the
+   `Suivi > Child issues` / `PRs récentes mergées` blocks in the same session.
+   A body that says "in progress, 3/16 commits" for a merged lot is a defect
+   more serious than an unset field — it actively misinforms the PO.
+
+6. **Reference Epics must be on the board.** Any EPIC issue the PO is
+   piloting (roadmap, authz, HTTPS, IHM, canary, …) must be visible on the
+   board as an item with `Item Type=Epic`. An EPIC that exists in the repo but
+   not on the board is invisible work.
+
+### What the pilot does NOT need PO approval for
+
+The dashboard housekeeping listed above is **routine tracking sync**, not a
+decision. The pilot does not stop mid-flow to ask "may I update the board?" —
+they do it. The PO's approval is required only for content that changes
+scope, risk, engagement, or audit-visible contracts (see the standing PO
+gates in `WORKFLOW_ENGINEERING.md`).
+
+### What the pilot DOES stop for
+
+- Creating a status field option (see the "Adding a new option to a
+  single-select field" migration rule above).
+- Deleting an existing item (destructive, may hide history).
+- Renaming a Lot / Priority option value used across many items.
+- Any board schema change (adding a field, changing a view).
+
+### Verification pattern (end of task)
+
+Before returning to the PO, the pilot runs an implicit self-check:
+
+- Did I merge a PR this task? → is it `Status=Done` on the board with all
+  five fields set?
+- Did I open an issue? → is it on the board with the five fields set?
+- Did I close a sub-mission? → is the parent EPIC body up to date?
+- Did I identify a sub-mission waiting on PO input? → is it `Status=Blocked`
+  with an explicit reason in the body?
+
+If any answer is "no", fix it before the end-of-task summary.
+
+### Why 
+
+The pilot's autonomous work multiplies the risk of dashboard drift: many PRs
+merged fast, many sub-missions spawned, many items in flight. Without this
+end-of-task discipline the board decays into a partial view, and the PO
+loses the ability to arbitrate at a glance.
