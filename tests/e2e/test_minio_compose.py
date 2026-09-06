@@ -49,22 +49,22 @@ def admin_headers(token=BOOTSTRAP):
 
 
 async def call_mcp_tool(tool_name, arguments, token):
+    import httpx2
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client.streamable_http import streamable_http_client
 
-    async with streamablehttp_client(
-        f"{BASE_URL}/mcp",
+    async with httpx2.AsyncClient(
         headers={"Authorization": f"Bearer {token}"},
-        timeout=30,
-        sse_read_timeout=30,
-    ) as (read, write, _):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool(tool_name, arguments)
-            text = ""
-            if result.content:
-                text = getattr(result.content[0], "text", "") or ""
-            return json.loads(text)
+        timeout=httpx2.Timeout(30, read=30),
+    ) as http_client:
+        async with streamable_http_client(f"{BASE_URL}/mcp", http_client=http_client) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(tool_name, arguments)
+                text = ""
+                if result.content:
+                    text = getattr(result.content[0], "text", "") or ""
+                return json.loads(text)
 
 
 @pytest.mark.skipif(not RUN_E2E, reason="Set RUN_COMPOSE_E2E=1 to run docker-compose e2e")

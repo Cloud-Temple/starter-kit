@@ -11,6 +11,8 @@ Ce client gère :
 
 import json
 import asyncio
+import os
+from pathlib import Path
 from typing import Optional, Callable, Any
 
 
@@ -39,60 +41,90 @@ class MCPClient:
         Returns:
             Le résultat de l'outil (dict)
         """
+        import httpx2
         from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
+        from mcp.client.streamable_http import streamable_http_client
+        from mcp.types import CallToolResult
 
         headers = {}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
 
+        ca_bundle = os.environ.get("MCP_CLIENT_CA_BUNDLE", "")
+        if ca_bundle and not Path(ca_bundle).is_file():
+            return {
+                "status": "error",
+                "message": "Bundle AC MCP introuvable : MCP_CLIENT_CA_BUNDLE pointe vers un fichier absent.",
+            }
+
         try:
-            async with streamablehttp_client(
-                f"{self.base_url}/mcp",
+            # Une session par appel est le contrat historique du starter-kit.
+            # Ne pas introduire ici de pool ni de client sessionless.
+            timeout = httpx2.Timeout(30.0, read=self.timeout)
+            async with httpx2.AsyncClient(
                 headers=headers,
-                timeout=30,
-                sse_read_timeout=self.timeout,
-            ) as (read, write, _):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
+                timeout=timeout,
+                verify=ca_bundle or True,
+            ) as http_client:
+                async with streamable_http_client(
+                    f"{self.base_url}/mcp",
+                    http_client=http_client,
+                ) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
 
-                    # Capturer les notifications de progression
-                    if on_progress:
-                        _original = session._received_notification
+                        # Capturer les notifications de progression
+                        if on_progress:
+                            _original = session._received_notification
 
-                        async def _patched(notification):
-                            try:
-                                root = getattr(notification, 'root', notification)
-                                params = getattr(root, 'params', None)
-                                if params:
-                                    msg = getattr(params, 'data', None)
-                                    if msg:
-                                        await on_progress(str(msg))
-                            except Exception:
-                                pass
-                            await _original(notification)
+                            async def _patched(notification):
+                                try:
+                                    params = getattr(notification, 'params', None)
+                                    if params:
+                                        # ProgressNotificationParams v2 expose le
+                                        # message utilisateur dans `message`.
+                                        msg = getattr(params, 'message', None)
+                                        if msg:
+                                            await on_progress(str(msg))
+                                except Exception:
+                                    pass
+                                await _original(notification)
 
-                        session._received_notification = _patched
+                            session._received_notification = _patched
 
-                    result = await session.call_tool(tool_name, arguments)
+                        result = await session.call_tool(
+                            tool_name,
+                            arguments,
+                            allow_input_required=False,
+                            allow_claimed=False,
+                        )
 
-                    # Parser la réponse MCP
-                    if getattr(result, 'isError', False):
-                        error_msg = "Erreur serveur MCP"
+                        # Le SDK v2 peut retourner InputRequiredResult ou Result.
+                        # Le CLI ne sait ni demander une saisie ni accepter une
+                        # revendication : tout autre type est refusé sans retry.
+                        if not isinstance(result, CallToolResult):
+                            return {
+                                "status": "error",
+                                "message": "Réponse MCP non supportée ; appel refusé par sécurité.",
+                            }
+
+                        # Parser la réponse MCP
+                        if result.is_error:
+                            error_msg = "Erreur serveur MCP"
+                            if result.content:
+                                error_msg = getattr(result.content[0], 'text', '') or error_msg
+                            return {"status": "error", "message": error_msg}
+
+                        text = ""
                         if result.content:
-                            error_msg = getattr(result.content[0], 'text', '') or error_msg
-                        return {"status": "error", "message": error_msg}
+                            text = getattr(result.content[0], 'text', '') or ""
+                        if not text:
+                            return {"status": "error", "message": "Réponse vide"}
 
-                    text = ""
-                    if result.content:
-                        text = getattr(result.content[0], 'text', '') or ""
-                    if not text:
-                        return {"status": "error", "message": "Réponse vide"}
-
-                    try:
-                        return json.loads(text)
-                    except json.JSONDecodeError:
-                        return {"status": "ok", "raw": text}
+                        try:
+                            return json.loads(text)
+                        except json.JSONDecodeError:
+                            return {"status": "ok", "raw": text}
 
         except ConnectionRefusedError:
             return {"status": "error", "message": f"Serveur non accessible: {self.base_url}"}

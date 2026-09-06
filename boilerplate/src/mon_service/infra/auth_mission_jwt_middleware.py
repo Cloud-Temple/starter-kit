@@ -27,7 +27,7 @@ Garanties de sécurité (fail-CLOSE par défaut) :
 Le middleware s'insère dans la pile ASGI en amont de l'`AuthMiddleware` Bearer
 legacy (cf. §17.12) :
 
-    Logging → Admin → HealthCheck → AuthMissionJWT → AuthBearer(legacy) → FastMCP
+    Logging → Admin → HealthCheck → AuthMissionJWT → AuthBearer(legacy) → MCPServer
 
 Modes (`STARTER_KIT_AUTH_MODE`) :
 

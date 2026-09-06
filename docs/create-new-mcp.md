@@ -162,7 +162,8 @@ docs/server-deployment.md
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt pytest pytest-asyncio
+pip install --require-hashes -r requirements.lock
+pip install pytest pytest-asyncio
 python -m pytest tests -q
 ```
 

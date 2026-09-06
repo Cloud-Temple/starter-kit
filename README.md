@@ -47,7 +47,7 @@ Chaque serveur MCP Cloud Temple suit le **même pattern architectural** :
 - **3 couches** d'interface (API MCP + CLI scriptable + shell interactif)
 - **Pile middleware ASGI** de base, avec un PEP mission_token optionnel
 - **Mêmes conventions** (format retour, auth ContextVar, nommage, logs)
-- **Mêmes outils** (FastMCP, Click, prompt_toolkit, Rich)
+- **Mêmes outils** (MCPServer v2, Click, prompt_toolkit, Rich)
 - **Même infra** (Docker, WAF Caddy+Coraza, S3 Token Store)
 
 Ce guide vous permet de démarrer un nouveau serveur MCP en quelques heures
@@ -86,7 +86,7 @@ au lieu de quelques jours.
 Chaque serveur MCP Cloud Temple assemble les couches middleware dans `create_app()` :
 
 ```
-LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → [AuthMissionJWTMiddleware] → AuthMiddleware → FastMCP
+LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → [AuthMissionJWTMiddleware] → AuthMiddleware → MCPServer
 ```
 
 | Couche (ext → int)         | Intercepte                          | Rôle                                |
@@ -96,7 +96,7 @@ LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → [AuthMission
 | **HealthCheckMiddleware**  | `/health`, `/healthz`, `/ready`     | JSON direct (sans auth, pour WAF)   |
 | **AuthMissionJWTMiddleware** *(optionnel)* | Requêtes MCP, si `STARTER_KIT_AUTH_MODE != bearer` | Valide le `mission_token` ES256 via JWKS mcp-mission (PEP) |
 | **AuthMiddleware**         | Toutes les requêtes MCP             | Bearer/JWT → ContextVars            |
-| **FastMCP app**            | MCP Protocol (Streamable HTTP)      | `/mcp` endpoint                     |
+| **MCPServer app (SDK v2)** | MCP Protocol (Streamable HTTP)      | `/mcp` endpoint                     |
 
 > ⚠️ **LoggingMiddleware DOIT être en position outermost** (dernier empilé = premier exécuté).
 > Si placé en innermost, les requêtes admin et health ne sont pas loguées dans le ring buffer
@@ -112,7 +112,7 @@ def create_app():
     from .auth.middleware import AuthMiddleware, LoggingMiddleware
     from .admin.middleware import AdminMiddleware
 
-    app = mcp.streamable_http_app()       # FastMCP (innermost)
+    app = mcp.streamable_http_app(...)    # MCPServer v2 (innermost)
     app = AuthMiddleware(app)             # Auth Bearer/JWT + ContextVars
     if settings.starter_kit_auth_mode != "bearer":
         from .infra.auth_mission_jwt_middleware import AuthMissionJWTMiddleware
@@ -171,14 +171,14 @@ dynamic values via `textContent`, not HTML interpolation. The app and WAF CSP us
 
 | Composant        | Technologie             | Rôle                                |
 | ---------------- | ----------------------- | ----------------------------------- |
-| Framework MCP    | `FastMCP` (Python SDK)  | Expose les outils via Streamable HTTP |
+| Framework MCP    | `MCPServer` (SDK Python v2) | Expose les outils via Streamable HTTP |
 | Transport        | Streamable HTTP         | `/mcp` endpoint (remplace SSE)      |
-| Serveur HTTP     | `Uvicorn` (ASGI)        | Sert l'application FastMCP          |
+| Serveur HTTP     | `Uvicorn` (ASGI)        | Sert l'application MCPServer        |
 | Configuration    | `pydantic-settings`     | Variables d'environnement + `.env`  |
 | CLI scriptable   | `Click`                 | Commandes en ligne                  |
 | Shell interactif | `prompt_toolkit`        | Autocomplétion, historique          |
 | Affichage        | `Rich`                  | Tables, panels, couleurs, Markdown  |
-| Communication    | `httpx`                 | Client HTTP vers le serveur         |
+| Communication    | `httpx2` pour MCP, `httpx` pour REST | Client HTTP vers le serveur |
 | Auth             | Bearer Token + mission_token ContextVars | Authentification request-scoped |
 | Token Store      | S3 + cache TTL 5min     | Persistance tokens (optionnel)      |
 | Console admin    | SPA HTML/JS             | Interface web d'administration      |
@@ -227,7 +227,8 @@ mon-mcp-server/
 │   └── Dockerfile              # Image Caddy avec plugin Coraza
 ├── Dockerfile
 ├── docker-compose.yml          # WAF + MCP service + réseau interne
-├── requirements.txt
+├── requirements.txt          # dépendances directes
+├── requirements.lock         # résolution Python 3.11 avec hashes
 ├── .env.example
 ├── VERSION
 └── README.md
@@ -245,7 +246,7 @@ Sans cela, les clients MCP (Cline, Claude Desktop…) affichent **"No descriptio
 ```python
 from typing import Annotated, Optional
 from pydantic import Field
-from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.mcpserver import MCPServer, Context
 
 @mcp.tool()
 async def mon_outil(
@@ -254,7 +255,7 @@ async def mon_outil(
     action: Annotated[str, Field(default="read", description="Action : read, write, delete")] = "read",
     timeout: Annotated[int, Field(default=30, description="Timeout en secondes (max 60)")] = 30,
     tags: Annotated[Optional[list[str]], Field(default=None, description="Tags optionnels pour filtrer")] = None,
-    # ⚠️ ctx est le seul paramètre SANS description (interne FastMCP)
+    # ⚠️ ctx est le seul paramètre SANS description (interne MCPServer)
     ctx: Optional[Context] = None,
 ) -> dict:
     """Description courte de l'outil (visible dans la liste des tools)."""
@@ -263,7 +264,7 @@ async def mon_outil(
 **Règles** :
 - `Annotated[type, Field(description="...")]` pour **chaque** paramètre utilisateur
 - Descriptions **concises** (1 ligne) avec valeurs possibles, exemples, contraintes
-- `ctx: Optional[Context] = None` en dernier, **sans** description (injecté par FastMCP)
+- `ctx: Optional[Context] = None` en dernier, **sans** description (injecté par MCPServer)
 - Les optionnels : `Field(default=..., description="...")` + `= ...` (les deux !)
 - Imports requis : `from typing import Annotated` et `from pydantic import Field`
 
@@ -670,7 +671,7 @@ boilerplate/
 ├── src/mon_service/
 │   ├── __init__.py
 │   ├── __main__.py          # python -m mon_service
-│   ├── server.py            # FastMCP + system_health/about/whoami + create_app() + bannière
+│   ├── server.py            # MCPServer v2 + system_health/about/whoami + create_app() + bannière
 │   ├── config.py            # pydantic-settings (S3, WAF, auth)
 │   ├── admin/               # Console admin web (/admin)
 │   │   ├── __init__.py
@@ -714,10 +715,11 @@ boilerplate/
 ├── CHANGELOG.md             # Historique des versions (format SemVer)
 ├── Dockerfile               # Python 3.11, utilisateur non-root
 ├── docker-compose.yml       # WAF (port 8082) → MCP (port 8002, interne)
-├── requirements.txt         # mcp, uvicorn, boto3, click, rich, httpx
+├── requirements.txt         # dépendances directes
+├── requirements.lock        # résolution Python 3.11 avec hashes
 ├── .env.example             # Variables d'environnement documentées
 ├── .gitignore               # Python, IDE, OS, secrets
-├── VERSION                  # 1.2.2
+├── VERSION                  # 2.0.0
 └── README.md                # Guide de démarrage rapide
 ```
 

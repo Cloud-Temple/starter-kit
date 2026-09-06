@@ -176,7 +176,7 @@ Via CLI :
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 
 python scripts/mcp_cli.py \
   --url http://localhost:8082 \
