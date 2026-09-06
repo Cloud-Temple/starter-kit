@@ -1,6 +1,6 @@
 # 🚀 Starter Kit — Créer un serveur MCP Cloud Temple
 
-> **Version actuelle :** [`v2.0.0`](https://github.com/Cloud-Temple/starter-kit/releases/tag/v2.0.0)
+> **Version actuelle :** [`v2.0.1`](https://github.com/Cloud-Temple/starter-kit/releases/tag/v2.0.1)
 > — MCP Python SDK `2.1.1` — [Changelog](CHANGELOG.md)
 >
 > **Audience** : Assistant IA (Cline, Cursor, etc.) ou développeur humain.
@@ -722,7 +722,7 @@ boilerplate/
 ├── requirements.lock        # résolution Python 3.11 avec hashes
 ├── .env.example             # Variables d'environnement documentées
 ├── .gitignore               # Python, IDE, OS, secrets
-├── VERSION                  # 2.0.0
+├── VERSION                  # 2.0.1
 └── README.md                # Guide de démarrage rapide
 ```
 

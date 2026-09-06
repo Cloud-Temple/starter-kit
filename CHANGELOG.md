@@ -1,6 +1,21 @@
 # Changelog
 
-## v2.0.0 — 2026-09-06 — Migration vers MCP Python SDK v2
+## v2.0.1 — 2026-09-06 — Release metadata alignment
+
+### Fixed
+
+- Added the missing repository-level `v2.0.0` Changelog entry.
+- Corrected the boilerplate `v2.0.0` release date to the actual publication
+  date and exposed the current release from the root README.
+- Updated the GitHub repository description and release notes to refer to MCP
+  SDK v2 instead of the removed FastMCP architecture.
+
+This patch changes release metadata and documentation only; the MCP v2 runtime
+is identical to `v2.0.0`.
+
+---
+
+## v2.0.0 — 2026-09-06 — Migration to MCP Python SDK v2
 
 ### Changed
 
