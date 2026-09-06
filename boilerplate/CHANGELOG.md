@@ -5,7 +5,7 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ---
 
-## [2.0.0] — 2026-09-04
+## [2.0.0] — 2026-09-06
 
 ### Changed
 - Migrated the generated MCP server and CLI transport to Python MCP SDK v2:
