@@ -5,7 +5,16 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ---
 
-## [2.0.0] — 2026-09-04
+## [2.0.1] — 2026-09-06
+
+### Fixed
+
+- Corrected the `2.0.0` publication date and aligned the repository-level
+  Changelog, README release link and GitHub metadata.
+
+This patch contains no MCP runtime change.
+
+## [2.0.0] — 2026-09-06
 
 ### Changed
 - Migrated the generated MCP server and CLI transport to Python MCP SDK v2:

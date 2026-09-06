@@ -20,7 +20,7 @@ docker compose up -d
 
 # Vérification
 curl http://localhost:8082/health
-# → {"status":"healthy","service":"mon-mcp-service","version":"2.0.0"}
+# → {"status":"healthy","service":"mon-mcp-service","version":"2.0.1"}
 
 # Console d'administration (logo Cloud Temple + sidebar)
 open http://localhost:8082/admin

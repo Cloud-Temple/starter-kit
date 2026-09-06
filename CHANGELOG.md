@@ -1,5 +1,53 @@
 # Changelog
 
+## v2.0.1 — 2026-09-06 — Release metadata alignment
+
+### Fixed
+
+- Added the missing repository-level `v2.0.0` Changelog entry.
+- Corrected the boilerplate `v2.0.0` release date to the actual publication
+  date and exposed the current release from the root README.
+- Updated the GitHub repository description and release notes to refer to MCP
+  SDK v2 instead of the removed FastMCP architecture.
+
+This patch changes release metadata and documentation only; the MCP v2 runtime
+is identical to `v2.0.0`.
+
+---
+
+## v2.0.0 — 2026-09-06 — Migration to MCP Python SDK v2
+
+### Changed
+
+- Migrated the generated MCP server and CLI transport to MCP Python SDK
+  `2.1.1`: `MCPServer`, `streamable_http_client` and `httpx2` replace the
+  removed FastMCP v1 import and legacy `streamablehttp_client` transport.
+- Pinned `mcp==2.1.1` and `mcp-types==2.1.1`; added the Python 3.11
+  hash-locked `requirements.lock` used by Docker and CI.
+- Preserved the historical one-`ClientSession`-per-call CLI lifecycle. This
+  release deliberately introduces neither pooling, sessionless MCP nor
+  `mode="auto"`.
+
+### Security
+
+- `MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS` are mandatory deployment
+  configuration; server startup fails closed when either policy is absent.
+- The intentional Coraza bypass remains limited to `/mcp` for Streamable HTTP.
+  Compensating controls are Caddy per-IP rate limiting, a 4 MiB request-body
+  limit, Host/Origin checks, application authentication and secret-free logs.
+- The CLI rejects input-required, claimed and all other non-`CallToolResult`
+  responses; an unavailable configured internal CA bundle also fails closed.
+
+### Compatibility and validation
+
+- A real isolated MCP `1.28.1` client is validated against the v2 server.
+- Unit and ASGI tests passed: 98 passed, 3 skipped, 2 deselected.
+- MinIO and Vault Compose E2E paths passed through Caddy/Coraza. The active
+  Coraza/OWASP CRS filter blocked a controlled XSS request on the admin API
+  with HTTP 403 while `/mcp` streaming remained functional.
+
+---
+
 ## v1.2.2 — 2026-06-25 — Admin console activity and rendering hardening
 
 ### Fixed
