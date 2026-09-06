@@ -20,7 +20,7 @@ docker compose up -d
 
 # Vérification
 curl http://localhost:8082/health
-# → {"status":"healthy","service":"mon-mcp-service","version":"1.2.2"}
+# → {"status":"healthy","service":"mon-mcp-service","version":"2.0.0"}
 
 # Console d'administration (logo Cloud Temple + sidebar)
 open http://localhost:8082/admin
@@ -29,7 +29,7 @@ open http://localhost:8082/admin
 ### 3. CLI
 
 ```bash
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 
 # Santé du service
 python scripts/mcp_cli.py health
@@ -52,7 +52,7 @@ python scripts/mcp_cli.py token revoke <hash_prefix>
 ### 4. Lancement local (sans Docker)
 
 ```bash
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 python -m src.mon_service
 ```
 
@@ -75,7 +75,7 @@ Voir [DESIGN/ARCHITECTURE.md](DESIGN/ARCHITECTURE.md) pour les détails.
 ### Middlewares ASGI
 
 ```
-LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → [AuthMissionJWTMiddleware] → AuthMiddleware → FastMCP
+LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → [AuthMissionJWTMiddleware] → AuthMiddleware → MCPServer
 ```
 
 | Middleware              | Rôle                                         |
@@ -85,7 +85,7 @@ LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → [AuthMission
 | HealthCheckMiddleware   | `/health`, `/healthz`, `/ready` (sans auth)  |
 | AuthMissionJWTMiddleware *(optionnel)* | `mission_token` ES256/JWKS mcp-mission |
 | AuthMiddleware          | Bearer/JWT → ContextVars (request-scoped)    |
-| FastMCP                 | Protocole MCP (Streamable HTTP)              |
+| MCPServer (SDK v2)      | Protocole MCP (Streamable HTTP)              |
 
 ### Infrastructure
 
@@ -143,6 +143,7 @@ boilerplate/
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
+├── requirements.lock          # résolution Python 3.11 avec hashes
 ├── .env.example
 ├── .gitignore
 └── VERSION
@@ -156,6 +157,9 @@ boilerplate/
 | ---------------------- | ---------------------------------- | ------------------------- |
 | `MCP_SERVER_NAME`      | Nom du service                     | `mon-mcp-service`         |
 | `MCP_SERVER_PORT`      | Port d'écoute (interne)            | `8002`                    |
+| `MCP_ALLOWED_HOSTS` | Liste JSON des Host publics acceptés par `/mcp` | **obligatoire** |
+| `MCP_ALLOWED_ORIGINS` | Liste JSON des Origin publics acceptés par `/mcp` | **obligatoire** |
+| `MCP_MAX_REQUEST_BODY_SIZE` | Taille maximale d’un POST `/mcp` | `4194304` (4 MiB) |
 | `WAF_PORT`             | Port WAF (externe)                 | `8082`                    |
 | `ADMIN_BOOTSTRAP_KEY`  | Token admin (⚠️ changer !)        | `change_me_in_production` |
 | `STARTER_KIT_AUTH_MODE` | Mode auth MCP (`bearer`, `jwt`, `dual-stack`) | `bearer` |
@@ -173,6 +177,7 @@ boilerplate/
 | ----------- | ------------------ | ------------------------ |
 | `MCP_URL`   | URL du serveur     | `http://localhost:8002`  |
 | `MCP_TOKEN` | Token d'auth       | (vide)                   |
+| `MCP_CLIENT_CA_BUNDLE` | Chemin d’un bundle PEM d’AC interne pour le CLI | magasin système |
 
 ---
 

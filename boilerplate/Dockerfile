@@ -4,7 +4,8 @@ WORKDIR /app
 
 # Dépendances Python
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock .
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # Code source
 COPY src/ src/

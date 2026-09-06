@@ -2,7 +2,7 @@
 """Configuration du service MCP via pydantic-settings."""
 
 from functools import lru_cache
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     mcp_server_host: str = "0.0.0.0"
     mcp_server_port: int = 8002
     mcp_server_debug: bool = False
+    # Le déploiement fournit les valeurs publiques exactes au format JSON,
+    # par exemple MCP_ALLOWED_HOSTS='["mcp.example.fr"]'. Elles n'ont pas de
+    # défaut : un service publiable sans politique Host/Origin échoue au boot.
+    mcp_allowed_hosts: list[str] = Field(default_factory=list)
+    mcp_allowed_origins: list[str] = Field(default_factory=list)
+    mcp_max_request_body_size: int = 4 * 1024 * 1024
 
     # --- Branding admin UI ---
     # Valeurs: ct (Cloud Temple), dgy (Dragonfly), isec (Intrinsec)
@@ -100,6 +106,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_settings(self) -> "Settings":
+        # --- Sécurité du transport MCP v2 ---
+        if not self.mcp_allowed_hosts:
+            raise ValueError("MCP_ALLOWED_HOSTS ne peut pas être vide (protection DNS rebinding).")
+        if not self.mcp_allowed_origins:
+            raise ValueError("MCP_ALLOWED_ORIGINS ne peut pas être vide (protection Origin).")
+        if self.mcp_max_request_body_size <= 0:
+            raise ValueError("MCP_MAX_REQUEST_BODY_SIZE doit être strictement positif.")
+
         # --- Validation PROXY_URL ---
         if self.proxy_url and not (
             self.proxy_url.startswith("http://")

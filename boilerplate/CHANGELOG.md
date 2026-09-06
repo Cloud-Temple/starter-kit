@@ -5,6 +5,42 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ---
 
+## [2.0.0] — 2026-09-04
+
+### Changed
+- Migrated the generated MCP server and CLI transport to Python MCP SDK v2:
+  `MCPServer`, `streamable_http_client` and `httpx2` replace the removed
+  FastMCP v1 import and legacy `streamablehttp_client` transport.
+- Pinned `mcp==2.1.1` and `mcp-types==2.1.1`; added the hash-locked,
+  Python-3.11 `requirements.lock` receipt used by the Docker image.
+- Preserved the historical one-`ClientSession`-per-call CLI lifecycle. This
+  release deliberately does not add pooling, sessionless MCP or `mode="auto"`.
+- Added explicit Host/Origin validation and a 4 MiB MCP request-body limit,
+  configured by deployment rather than hard-coded public domains.
+
+### Security
+- The intentional Coraza bypass remains limited to `/mcp` to preserve
+  Streamable HTTP/SSE. Its compensating controls are documented in DESIGN:
+  Caddy per-IP rate limiting, bounded request body, Host/Origin checks,
+  application authentication and secret-free request logging.
+- The CLI trusts the system certificate store by default and can use a mounted
+  internal-CA bundle via `MCP_CLIENT_CA_BUNDLE`; a missing configured bundle is
+  rejected.
+- The client explicitly declines input-required, claimed, and every other
+  non-`CallToolResult` response.
+
+### Compatibility
+- Generated services must use the v2 dependencies and `MCPServer` import; this
+  is a major template-version bump. The Streamable HTTP server remains tested
+  against the MCP v1 client protocol before release.
+
+### Tests
+- Added regressions for Host/Origin enforcement, public health endpoints,
+  bounded body configuration, SSE EOF resolution, fresh session lifecycle and
+  fail-closed non-tool results. The MinIO and Vault Compose E2E stacks verify
+  the running Caddy/Coraza chain; Coraza/CRS blocks a malicious admin request
+  while the intentional `/mcp` bypass preserves MCP streaming.
+
 ## [1.2.2] — 2026-06-25
 
 ### Fixed

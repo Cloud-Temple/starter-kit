@@ -154,7 +154,7 @@ Le middleware est inséré **en amont** de l'`AuthMiddleware` Bearer legacy, et
 n'est ajouté que si `STARTER_KIT_AUTH_MODE != "bearer"` :
 
 ```
-Logging → Admin → HealthCheck → AuthMissionJWT → AuthBearer(legacy) → FastMCP
+Logging → Admin → HealthCheck → AuthMissionJWT → AuthBearer(legacy) → MCPServer
 ```
 
 Responsabilités :

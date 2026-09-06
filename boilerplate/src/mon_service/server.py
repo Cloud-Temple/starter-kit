@@ -3,7 +3,7 @@
 Serveur MCP — Point d'entrée principal.
 
 Ce fichier :
-1. Crée l'instance FastMCP
+1. Crée l'instance MCPServer (SDK MCP v2)
 2. Déclare les outils MCP (@mcp.tool())
 3. Assemble la chaîne de 5 middlewares ASGI
 4. Démarre le serveur Uvicorn
@@ -19,21 +19,20 @@ import platform
 from typing import Optional
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.mcpserver import MCPServer, Context
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .config import get_settings
 from .auth.context import check_access, check_write_permission, current_token_info
 
 # =============================================================================
-# Instance FastMCP
+# Instance MCPServer
 # =============================================================================
 
 settings = get_settings()
 
-mcp = FastMCP(
+mcp = MCPServer(
     name=settings.mcp_server_name,
-    host=settings.mcp_server_host,
-    port=settings.mcp_server_port,
 )
 
 
@@ -207,7 +206,7 @@ async def system_about() -> dict:
 #
 # ⚠️ IMPORTANT : chaque paramètre DOIT utiliser Annotated[type, Field(description="...")]
 #   pour que les clients MCP (Cline, Claude Desktop) affichent les descriptions.
-#   Seul ctx: Optional[Context] est exempt (interne FastMCP).
+#   Seul ctx: Optional[Context] est exempt (interne MCPServer).
 
 
 # =============================================================================
@@ -261,7 +260,7 @@ def create_app():
     Crée l'application ASGI complète avec les middlewares.
 
     Pile d'exécution (ext → int) :
-        LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → AuthMiddleware → FastMCP
+        LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → AuthMiddleware → MCPServer
 
     ⚠️ LoggingMiddleware est en position OUTERMOST pour capturer TOUTES les
     requêtes (admin, health, MCP). Si placé en innermost, les requêtes
@@ -273,13 +272,22 @@ def create_app():
         mission_token JWT ES256 via le JWKS de mcp-mission (PEP), en amont du
         Bearer legacy (cf. mcp-mission ARCHITECTURE §17.12)
     L'AuthMiddleware valide le Bearer token et injecte dans ContextVar
-    Le FastMCP gère le protocole MCP (Streamable HTTP)
+    MCPServer gère le protocole MCP (Streamable HTTP)
     """
     from .auth.middleware import AuthMiddleware, LoggingMiddleware
     from .admin.middleware import AdminMiddleware
 
-    # L'app de base est le Streamable HTTP handler du SDK MCP
-    app = mcp.streamable_http_app()
+    # L'app de base est le Streamable HTTP handler du SDK MCP v2. Quand le
+    # serveur écoute sur 0.0.0.0, le SDK ne déduit aucune liste sûre : les
+    # valeurs publiques sont donc configurées explicitement au déploiement.
+    app = mcp.streamable_http_app(
+        host=settings.mcp_server_host,
+        max_request_body_size=settings.mcp_max_request_body_size,
+        transport_security=TransportSecuritySettings(
+            allowed_hosts=settings.mcp_allowed_hosts,
+            allowed_origins=settings.mcp_allowed_origins,
+        ),
+    )
 
     # Empiler les middlewares (dernier ajouté = premier exécuté)
     app = AuthMiddleware(app)                   # Auth Bearer + ContextVar

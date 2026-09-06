@@ -20,10 +20,24 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r boilerplate/requirements.txt pytest pytest-asyncio
+          python -m pip install --require-hashes -r boilerplate/requirements.lock
+          python -m pip install pytest pytest-asyncio
       - name: Run unit and ASGI integration tests
         run: |
           python -m pytest tests -q -m "not e2e"
+
+      - name: Verify MCP v1.28 client compatibility
+        run: |
+          python -m venv "$RUNNER_TEMP/mcp-v1"
+          "$RUNNER_TEMP/mcp-v1/bin/pip" install "mcp==1.28.1"
+          MCP_ALLOWED_HOSTS='["127.0.0.1:18002"]' MCP_ALLOWED_ORIGINS='["http://127.0.0.1:18002"]' PYTHONPATH=boilerplate/src python -m uvicorn mon_service.server:create_app --factory --host 127.0.0.1 --port 18002 --log-level warning &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --fail --silent http://127.0.0.1:18002/health >/dev/null; then break; fi
+            sleep 1
+          done
+          MCP_V1_PYTHON="$RUNNER_TEMP/mcp-v1/bin/python" MCP_V1_COMPAT_URL=http://127.0.0.1:18002/mcp python -m pytest tests/test_mcp_v1_compat.py -q
 
   e2e-minio-compose:
     runs-on: ubuntu-latest
@@ -36,7 +50,8 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r boilerplate/requirements.txt pytest pytest-asyncio
+          python -m pip install --require-hashes -r boilerplate/requirements.lock
+          python -m pip install pytest pytest-asyncio
       - name: Start CI stack (WAF + MCP + MinIO)
         run: |
           docker compose -f boilerplate/docker-compose.ci.yml up -d --build
@@ -70,7 +85,8 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r boilerplate/requirements.txt pytest pytest-asyncio
+          python -m pip install --require-hashes -r boilerplate/requirements.lock
+          python -m pip install pytest pytest-asyncio
       - name: Start Vault CI stack (WAF + MCP + fake MCP Vault)
         run: |
           docker compose -f boilerplate/docker-compose.vault-ci.yml up -d --build

@@ -28,7 +28,7 @@
 │  │ HealthCheckMiddleware — /health, /healthz, /ready    │   │
 │  │ AuthMissionJWTMiddleware — mission_token ES256/JWKS  │   │
 │  │ AuthMiddleware      — Bearer/JWT → ContextVars       │   │
-│  │ FastMCP             — /mcp (Streamable HTTP)         │   │
+│  │ MCPServer (SDK v2)  — /mcp (Streamable HTTP)         │   │
 │  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────┬────────────────────────────────────┘
                           │
@@ -185,6 +185,8 @@ de vérité.
 | Hash prefix trop court → collision | Min 8 caractères pour revoke |
 | Bootstrap key par défaut en prod | Warning au démarrage |
 | LoggingMiddleware en innermost | Placé outermost (premier exécuté) |
+| DNS rebinding / Origin sur `/mcp` | `MCP_ALLOWED_HOSTS` et `MCP_ALLOWED_ORIGINS` explicites, fournis par le déploiement |
+| Bypass Coraza nécessaire au streaming `/mcp` | Bypass limité à `/mcp` ; rate limiting Caddy, auth, logs sans secrets et limite SDK `MCP_MAX_REQUEST_BODY_SIZE` (4 MiB) |
 
 ---
 
@@ -211,7 +213,36 @@ print(f"🔧 [MonOutil] Message", file=sys.stderr)
 | Décision | Raison |
 |----------|--------|
 | Streamable HTTP (pas SSE) | Standard MCP v2024+, bidirectionnel, proxy-friendly |
-| FastMCP (pas MCP SDK bas niveau) | Décorateurs `@mcp.tool()`, moins de boilerplate |
+| MCPServer (SDK MCP v2) | Décorateurs `@mcp.tool()`, compatibilité avec les serveurs MCP v1 déployés et transport Streamable HTTP maintenu |
+| Une `ClientSession` par appel CLI | Contrat historique préservé ; ni pool ni client sessionless introduits par la migration |
+| Host/Origin configurés au déploiement | Le serveur écoute derrière Caddy ; les noms publics exacts ne sont pas codés dans le template |
+
+### Transport MCP v2 et edge
+
+`MCPServer.streamable_http_app()` reçoit une politique de transport explicite.
+`MCP_ALLOWED_HOSTS` et `MCP_ALLOWED_ORIGINS` sont des listes JSON : en
+production elles doivent contenir les valeurs publiques exactes vues par Caddy,
+par exemple `["mcp.example.fr"]` et `["https://mcp.example.fr"]`. Les valeurs
+`localhost` du `.env.example` ne sont qu’un confort de développement ; leur
+absence bloque le démarrage du serveur.
+
+Le bypass Coraza de `/mcp` est intentionnel : l’inspection WAF peut bufferiser
+le SSE et provoquer des faux positifs sur les charges JSON/encodées. Il ne
+s’étend pas aux routes admin, health ou statiques : elles restent sous
+Coraza/OWASP CRS. Les compensations obligatoires pour `/mcp` sont : limitation
+Caddy à 300 requêtes/minute/IP, limite applicative de 4 MiB (configurable),
+validation Host/Origin, authentification applicative et journalisation
+outermost sans secret. Les validations Compose MinIO et Vault démontrent que le
+module Coraza est chargé et que CRS bloque une requête malveillante hors `/mcp`.
+
+Le CLI repose sur le magasin d’AC système fourni par `httpx2`/`truststore`. Si
+l’AC interne n’y est pas installée, le déploiement monte un bundle PEM en
+lecture seule et renseigne `MCP_CLIENT_CA_BUNDLE`; un chemin absent échoue fermé.
+
+Le verrou exact des dépendances est dans `requirements.lock`, généré sous
+Python 3.11 avec hashes. Les versions exactes `mcp==2.1.1` et
+`mcp-types==2.1.1` sont revues dans la veille sécurité des dépendances afin de
+ne pas différer un correctif CVE upstream.
 | ContextVar pour l'auth | Thread-safe en asyncio, zéro couplage |
 | AuthMissionJWT en amont du Bearer legacy | Validation PEP avant fallback dual-stack |
 | S3 pour les tokens | Persistance sans base de données, compatible cloud |
