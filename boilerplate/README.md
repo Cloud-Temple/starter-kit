@@ -20,7 +20,7 @@ docker compose up -d
 
 # Vérification
 curl http://localhost:8082/health
-# → {"status":"healthy","service":"mon-mcp-service","version":"2.0.1"}
+# → {"status":"healthy","service":"mon-mcp-service","version":"2.0.2"}
 
 # Console d'administration (logo Cloud Temple + sidebar)
 open http://localhost:8082/admin
@@ -99,6 +99,9 @@ Internet → WAF Caddy+Coraza (:8082) → mon-mcp (:8002, réseau interne)
 
 ```
 boilerplate/
+├── AGENTS.md                 # Bootstrap commun vers DESIGN/AGENTIC_RULES/
+├── CLAUDE.md                 # Import du bootstrap pour Claude Code
+├── QWEN.md                   # Compléments éventuels propres à Qwen Code
 ├── src/mon_service/
 │   ├── server.py              # Outils MCP + pile ASGI + bannière
 │   ├── config.py              # pydantic-settings (S3, WAF, auth)
@@ -232,11 +235,74 @@ Voir le guide complet : [Starter Kit MCP Cloud Temple](../README.md)
 
 ## Règles agentiques du projet
 
-Le fichier [`DESIGN/AGENTIC_RULES/MAIN_RULES.md`](DESIGN/AGENTIC_RULES/MAIN_RULES.md)
-est le point d'entrée à lire en premier. Le dossier
-[`DESIGN/AGENTIC_RULES/`](DESIGN/AGENTIC_RULES/) contient les règles détaillées
-pour les agents IA qui travailleront dans ce projet une fois le boilerplate
-copié.
+### Pourquoi ?
+
+Une session d'agent IA démarre sans connaître les usages implicites de
+l'équipe. Le code décrit l'application, mais pas nécessairement le workflow
+Git, les validations attendues, les décisions d'architecture, les exigences de
+sécurité ou les gates humains. Les **Agentic Rules** versionnent ce cadre avec
+le dépôt pour que chaque agent commence avec les mêmes consignes.
+
+Ces règles orientent le modèle ; elles ne remplacent pas les contrôles
+techniques. Les permissions, hooks, tests CI et protections de branche restent
+nécessaires pour garantir une interdiction.
+
+### Comment cela fonctionne ?
+
+Le dispositif utilise deux niveaux :
+
+- un petit fichier racine reconnu par l'outil (`AGENTS.md`, `CLAUDE.md` ou
+  `QWEN.md`) amorce la lecture ;
+- [`DESIGN/AGENTIC_RULES/`](DESIGN/AGENTIC_RULES/) reste l'unique source
+  canonique des règles détaillées, avec
+  [`MAIN_RULES.md`](DESIGN/AGENTIC_RULES/MAIN_RULES.md) comme point d'entrée.
+
+Ne pas recopier le corpus dans chaque fichier d'outil : les copies finiraient
+par diverger. Un simple lien Markdown n'étant pas suivi automatiquement par
+tous les agents, le bootstrap doit leur demander explicitement de lire les
+fichiers.
+
+### Bootstraps fournis
+
+Le fichier [`AGENTS.md`](AGENTS.md) fourni à la racine contient :
+
+```markdown
+# Instructions des agents
+
+Les règles canoniques du projet se trouvent dans `DESIGN/AGENTIC_RULES/`.
+
+Avant toute action dans ce dépôt :
+
+1. Lire `DESIGN/AGENTIC_RULES/MAIN_RULES.md`.
+2. Lire les autres fichiers Markdown de `DESIGN/AGENTIC_RULES/`.
+3. Appliquer ces règles à l'ensemble du dépôt.
+
+Ne pas dupliquer les règles détaillées ici : modifier leur fichier canonique.
+```
+
+Compatibilité des principaux agents :
+
+| Outil | Comportement | Fichier complémentaire |
+| ----- | ------------ | ---------------------- |
+| Codex | Charge nativement le `AGENTS.md` racine et les instructions plus proches du répertoire de travail | Aucun dans le cas courant |
+| Claude Code | Charge `CLAUDE.md`, pas directement `AGENTS.md` | Le fichier fourni contient uniquement `@AGENTS.md` |
+| Qwen Code | Charge nativement `AGENTS.md` ainsi que ses éventuels `QWEN.md` | `QWEN.md` uniquement pour des consignes propres à Qwen, sans recopier les règles communes |
+
+Les fichiers [`CLAUDE.md`](CLAUDE.md) et [`QWEN.md`](QWEN.md) sont également
+fournis. Le premier importe `@AGENTS.md` ; le second rappelle que Qwen charge
+déjà le bootstrap commun et doit réserver `QWEN.md` à ses consignes propres.
+
+Références officielles :
+
+- [Codex — Custom instructions with AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
+- [Claude Code — How Claude remembers your project](https://code.claude.com/docs/en/memory)
+- [Qwen Code — Memory and QWEN.md](https://qwenlm.github.io/qwen-code-docs/en/users/features/memory/)
+
+Dans un monorepo, réserver les fichiers imbriqués aux sous-répertoires ayant de
+véritables règles spécifiques. Les instructions plus proches du code peuvent
+compléter ou surcharger celles de la racine selon l'outil.
+
+### Adapter les règles fournies
 
 Dans ces règles, le répertoire est virtualisé par `{AGENTIC_RULES_DIR}`. La
 valeur par défaut est `DESIGN/AGENTIC_RULES`, à adapter si le projet déplace ses
@@ -264,6 +330,11 @@ Références Cloud Temple :
 Avant de rendre ces règles obligatoires, remplacer les placeholders du template
 par les valeurs du projet. Ne jamais versionner de token, endpoint sensible ou
 secret MCP dans ces fichiers.
+
+Après toute modification, ouvrir une nouvelle session à la racine et vérifier
+les instructions chargées : demander un résumé des sources avec Codex et Qwen
+Code ; avec Claude Code, contrôler `CLAUDE.md` dans `/context`, puis demander un
+résumé des règles importées depuis `AGENTS.md`.
 
 ---
 

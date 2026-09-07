@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.0.2 — 2026-09-07 — Agentic rules onboarding
+
+### Documentation
+
+- Reworked the agentic-rules onboarding in both the starter-kit and generated
+  project READMEs: rationale, source-of-truth model, root `AGENTS.md` bootstrap,
+  scope and verification are now documented for newcomers.
+- Documented the equivalent Claude Code (`CLAUDE.md`) and Qwen Code (`QWEN.md`)
+  discovery mechanisms without duplicating the canonical project rules.
+- Added ready-to-use `AGENTS.md`, `CLAUDE.md` and `QWEN.md` bootstraps to the
+  generated-project boilerplate.
+- Repaired the obsolete root README link to the MCP client setup guide.
+
+This patch changes project onboarding and documentation only; the MCP v2
+runtime is identical to `v2.0.1`.
+
+---
+
 ## v2.0.1 — 2026-09-06 — Release metadata alignment
 
 ### Fixed

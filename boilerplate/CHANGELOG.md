@@ -5,6 +5,23 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ---
 
+## [2.0.2] — 2026-09-07
+
+### Documentation
+
+- Added a newcomer-oriented explanation of the agentic-rules model, its
+  purpose, scope, source of truth and verification workflow.
+- Documented the native instruction files used by Codex, Claude Code and Qwen
+  Code.
+
+### Added
+
+- Added root `AGENTS.md`, `CLAUDE.md` and `QWEN.md` bootstraps. They route each
+  supported coding agent to the canonical rules under
+  `DESIGN/AGENTIC_RULES/` without duplicating the rule corpus.
+
+This patch contains no MCP runtime change.
+
 ## [2.0.1] — 2026-09-06
 
 ### Fixed
