@@ -20,7 +20,7 @@ docker compose up -d
 
 # Vérification
 curl http://localhost:8082/health
-# → {"status":"healthy","service":"mon-mcp-service","version":"2.0.2"}
+# → {"status":"healthy","service":"mon-mcp-service","version":"2.0.3"}
 
 # Console d'administration (logo Cloud Temple + sidebar)
 open http://localhost:8082/admin
@@ -92,6 +92,25 @@ LoggingMiddleware → AdminMiddleware → HealthCheckMiddleware → [AuthMission
 ```
 Internet → WAF Caddy+Coraza (:8082) → mon-mcp (:8002, réseau interne)
 ```
+
+Les images de base sont verrouillées par version et digest SHA-256. Le runtime
+est construit sur Python `3.11.16-slim-trixie`. Le WAF compile
+Caddy `2.11.4` avec Coraza-Caddy `2.5.0` (Coraza `3.7.0`, OWASP CRS `4.25.0`)
+et s'exécute sans privilèges sur Alpine `3.23`. Les dépendances applicatives
+sont installées depuis `requirements.lock` avec hashes ; la CI les contrôle
+avec `pip-audit`. La fixture S3 Moto `5.2.3` a son propre lock audité et tourne
+également sans privilèges. Les images et actions CI sont versionnées, sans tag
+`latest`.
+
+Le volume nommé `caddy-data` conserve les certificats et l'état ACME entre les
+recréations du conteneur. Le binaire Caddy possède uniquement la capacité
+`NET_BIND_SERVICE`, nécessaire au mode TLS direct sur les ports 80/443, tout en
+restant exécuté par l'utilisateur non privilégié `caddy`.
+
+Ne pas ajouter `no-new-privileges` au conteneur dans le mode TLS direct : cette
+option neutraliserait la capacité fichier nécessaire aux ports 80/443. Avec un
+runtime qui l'impose, utiliser le mode derrière reverse proxy amont et conserver
+un port interne non privilégié (`8082`).
 
 ---
 

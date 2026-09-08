@@ -5,6 +5,31 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ---
 
+## [2.0.3] — 2026-09-08
+
+### Security
+
+- Pinned the application runtime to Python 3.11.16 by image digest and upgraded
+  the packaging toolchain before installing the hash-locked dependencies.
+- Pinned Caddy 2.11.4 and Alpine 3.23 by image digest, Coraza-Caddy 2.5.0,
+  caddy-ratelimit and corrected Go crypto/network/gRPC modules; the minimal WAF
+  runtime is non-root.
+- Added persistent ACME storage and the minimal bind-service capability needed
+  for direct TLS, and narrowed the Coraza bypass to `/mcp` plus its subpaths.
+- Removed floating CI action versions, pinned GitHub Actions to full commits
+  and replaced the archived MinIO images with a non-root Moto 5.2.3 fixture
+  built from an independent hash-locked dependency set.
+
+### Validation
+
+- The application and Moto fixture locks have no known vulnerability in
+  `pip-audit` 2.10.1.
+- Regression tests protect the reviewed versions against silent drift.
+- The Moto bucket bootstrap is idempotent across repeated Compose starts.
+
+Moto remains an isolated CI fixture and is not a production artifact; the real
+Cloud Temple / Dell ECS S3 target retains its separate live validation.
+
 ## [2.0.2] — 2026-09-07
 
 ### Documentation
