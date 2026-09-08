@@ -25,6 +25,7 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 - The application and Moto fixture locks have no known vulnerability in
   `pip-audit` 2.10.1.
 - Regression tests protect the reviewed versions against silent drift.
+- The Moto bucket bootstrap is idempotent across repeated Compose starts.
 
 Moto remains an isolated CI fixture and is not a production artifact; the real
 Cloud Temple / Dell ECS S3 target retains its separate live validation.

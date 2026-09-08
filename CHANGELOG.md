@@ -22,6 +22,7 @@
 - Both the application and Moto fixture locks report no known vulnerability
   with `pip-audit` 2.10.1.
 - Added regression tests for security-sensitive pins and floating image tags.
+- The Moto bucket bootstrap is idempotent across repeated Compose starts.
 
 Moto is an isolated CI fixture, not a production artifact. The production S3
 target remains Cloud Temple / Dell ECS and retains its separate live tests.

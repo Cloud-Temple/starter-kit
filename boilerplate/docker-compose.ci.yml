@@ -33,6 +33,7 @@ services:
       - |
         import boto3
         from botocore.config import Config
+        from botocore.exceptions import ClientError
         client = boto3.client(
             "s3",
             endpoint_url="http://moto:5000",
@@ -40,7 +41,14 @@ services:
             aws_secret_access_key="ci-secret-key",
             config=Config(region_name="fr1", signature_version="s3"),
         )
-        client.create_bucket(Bucket="starterkit-ci")
+        try:
+            client.create_bucket(Bucket="starterkit-ci")
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] not in {
+                "BucketAlreadyExists",
+                "BucketAlreadyOwnedByYou",
+            }:
+                raise
     networks:
       - mcp-net
 

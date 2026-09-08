@@ -65,6 +65,8 @@ def test_s3_fixture_replaces_unmaintained_minio_with_audited_moto_lock():
 
     assert "minio/" not in compose
     assert "starter-kit-moto-s3:5.2.3" in compose
+    assert '"BucketAlreadyOwnedByYou"' in compose
+    assert '"BucketAlreadyExists"' in compose
     assert (
         "FROM python:3.11.16-slim-trixie@sha256:"
         "9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534"
