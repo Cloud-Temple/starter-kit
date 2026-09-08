@@ -767,7 +767,7 @@ Recommended compatibility cases:
 
 ### E2E
 
-- Docker Compose MinIO with S3PolicyStore;
+- Docker Compose Moto S3 with S3PolicyStore;
 - Docker Compose fake Vault with VaultPolicyStore;
 - create policy;
 - create token referencing policy;

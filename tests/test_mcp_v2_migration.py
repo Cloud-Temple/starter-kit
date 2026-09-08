@@ -250,7 +250,9 @@ def test_caddy_keeps_the_intentional_mcp_bypass_and_loads_coraza():
     caddyfile = (ROOT / "boilerplate" / "waf" / "Caddyfile").read_text(encoding="utf-8")
     dockerfile = (ROOT / "boilerplate" / "waf" / "Dockerfile").read_text(encoding="utf-8")
     assert "github.com/corazawaf/coraza-caddy/v2" in dockerfile
-    assert "handle /mcp*" in caddyfile
+    assert "@mcp path /mcp /mcp/*" in caddyfile
+    assert "handle @mcp" in caddyfile
+    assert "handle /mcp*" not in caddyfile
     assert "flush_interval -1" in caddyfile
     assert "coraza_waf {" in caddyfile
     assert "load_owasp_crs" in caddyfile

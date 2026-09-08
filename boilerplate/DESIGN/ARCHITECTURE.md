@@ -216,6 +216,12 @@ print(f"🔧 [MonOutil] Message", file=sys.stderr)
 | MCPServer (SDK MCP v2) | Décorateurs `@mcp.tool()`, compatibilité avec les serveurs MCP v1 déployés et transport Streamable HTTP maintenu |
 | Une `ClientSession` par appel CLI | Contrat historique préservé ; ni pool ni client sessionless introduits par la migration |
 | Host/Origin configurés au déploiement | Le serveur écoute derrière Caddy ; les noms publics exacts ne sont pas codés dans le template |
+| Versions de runtime explicites | Python 3.11.16, Caddy 2.11.4, Coraza-Caddy 2.5.0 et Alpine 3.23, avec images de base verrouillées par digest SHA-256, rendent les mises à jour de sécurité revues et traçables |
+| ContextVar pour l'auth | Thread-safe en asyncio, zéro couplage |
+| AuthMissionJWT en amont du Bearer legacy | Validation PEP avant fallback dual-stack |
+| S3 pour les tokens | Persistance sans base de données, compatible cloud |
+| Ring buffer 200 entrées | Activité temps réel sans surcharge mémoire |
+| Sidebar + JS séparés | Maintenabilité, extensibilité métier |
 
 ### Transport MCP v2 et edge
 
@@ -232,7 +238,7 @@ s’étend pas aux routes admin, health ou statiques : elles restent sous
 Coraza/OWASP CRS. Les compensations obligatoires pour `/mcp` sont : limitation
 Caddy à 300 requêtes/minute/IP, limite applicative de 4 MiB (configurable),
 validation Host/Origin, authentification applicative et journalisation
-outermost sans secret. Les validations Compose MinIO et Vault démontrent que le
+outermost sans secret. Les validations Compose Moto S3 et Vault démontrent que le
 module Coraza est chargé et que CRS bloque une requête malveillante hors `/mcp`.
 
 Le CLI repose sur le magasin d’AC système fourni par `httpx2`/`truststore`. Si
@@ -243,8 +249,28 @@ Le verrou exact des dépendances est dans `requirements.lock`, généré sous
 Python 3.11 avec hashes. Les versions exactes `mcp==2.1.1` et
 `mcp-types==2.1.1` sont revues dans la veille sécurité des dépendances afin de
 ne pas différer un correctif CVE upstream.
-| ContextVar pour l'auth | Thread-safe en asyncio, zéro couplage |
-| AuthMissionJWT en amont du Bearer legacy | Validation PEP avant fallback dual-stack |
-| S3 pour les tokens | Persistance sans base de données, compatible cloud |
-| Ring buffer 200 entrées | Activité temps réel sans surcharge mémoire |
-| Sidebar + JS séparés | Maintenabilité, extensibilité métier |
+
+### Politique de versions et de sécurité des images
+
+Les Dockerfiles n'utilisent pas de tag majeur flottant. Le runtime Python fixe
+`3.11.16-slim-trixie` par digest, puis installe des versions corrigées de `pip`,
+`setuptools`, `wheel`, `jaraco.context`, `packaging` et `backports.tarfile`
+avant le lock applicatif à hashes. Le WAF compile Caddy
+`2.11.4` avec Coraza-Caddy `2.5.0`, le commit revu du module de rate limiting et
+des remplacements explicites pour `x/crypto`, `x/net` et `grpc`. L'étage final
+Alpine `3.23` ne contient que le binaire recompilé, les autorités de
+certification et les données de fuseau horaire ; il s'exécute avec l'utilisateur
+non privilégié `caddy`. Le volume Compose `caddy-data` conserve l'état ACME et
+le binaire reçoit uniquement `NET_BIND_SERVICE` pour le mode TLS direct.
+
+La CI S3 utilise Moto `5.2.3`, construit sur la même base Python corrigée, en
+utilisateur non privilégié et depuis un lock à hashes audité séparément. Cette
+fixture remplace les images communautaires MinIO archivées et leurs dépendances
+connues vulnérables. Elle ne fait pas partie du livrable de production : la
+compatibilité production est validée séparément contre le S3 Cloud Temple /
+Dell ECS réel.
+
+Toute mise à jour d'un pin suit le même contrôle minimal : build sans cache,
+inspection des versions réellement embarquées, scan de l'image, audit du lock
+Python et tests unitaires/E2E. La CI refuse les tags Compose `latest` et audite
+les deux fichiers `requirements.lock` avec `pip-audit`.

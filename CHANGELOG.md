@@ -1,5 +1,33 @@
 # Changelog
 
+## v2.0.3 — 2026-09-08 — Security version hardening
+
+### Security
+
+- Replaced floating Python and Caddy base tags with explicit, patched runtime
+  versions pinned by image digest: Python 3.11.16, Caddy 2.11.4 and Alpine 3.23.
+- Pinned Coraza-Caddy 2.5.0, the reviewed caddy-ratelimit commit and corrected
+  Go crypto, network and gRPC modules used to compile the WAF.
+- Upgraded the Python packaging toolchain to corrected versions before the
+  hash-locked application dependencies are installed.
+- Pinned CI actions to full commit SHAs and exact Python/test-tool versions.
+- Replaced the archived MinIO server/client images with a non-root Moto 5.2.3
+  S3 fixture built from its own hash-locked dependency set.
+- Persisted Caddy ACME state in a named volume, preserved non-root execution
+  with the minimal bind-service capability and narrowed the WAF bypass to
+  `/mcp` and its subpaths only.
+
+### Validation
+
+- Both the application and Moto fixture locks report no known vulnerability
+  with `pip-audit` 2.10.1.
+- Added regression tests for security-sensitive pins and floating image tags.
+
+Moto is an isolated CI fixture, not a production artifact. The production S3
+target remains Cloud Temple / Dell ECS and retains its separate live tests.
+
+---
+
 ## v2.0.2 — 2026-09-07 — Agentic rules onboarding
 
 ### Documentation

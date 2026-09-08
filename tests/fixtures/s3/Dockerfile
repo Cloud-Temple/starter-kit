@@ -2,8 +2,6 @@ FROM python:3.11.16-slim-trixie@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f
 
 WORKDIR /app
 
-# Dépendances Python : outils de packaging corrigés puis lock applicatif exact.
-COPY requirements.txt .
 COPY requirements.lock .
 RUN python -m pip install --no-cache-dir --upgrade \
         pip==26.2.1 \
@@ -14,17 +12,9 @@ RUN python -m pip install --no-cache-dir --upgrade \
         backports.tarfile==1.2.0 \
     && python -m pip install --no-cache-dir --require-hashes -r requirements.lock
 
-# Code source
-COPY src/ src/
-COPY scripts/ scripts/
-COPY VERSION .
+RUN useradd -r -s /bin/false moto
+USER moto
 
-# Sécurité : utilisateur non-root
-RUN useradd -r -s /bin/false mcp
-USER mcp
+EXPOSE 5000
 
-EXPOSE 8002
-
-# Point d'entrée : python -m mon_service
-# Adapter "mon_service" au nom réel de votre package
-CMD ["python", "-m", "src.mon_service"]
+CMD ["moto_server", "--host", "0.0.0.0", "--port", "5000"]

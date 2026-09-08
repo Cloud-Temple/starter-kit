@@ -8,7 +8,7 @@ This test suite validates the starter-kit in layers.
 flowchart TD
     A[PR / push CI] --> B[Unit + contract tests]
     A --> C[ASGI integration tests]
-    A --> D[Docker Compose e2e with MinIO]
+    A --> D[Docker Compose e2e with Moto S3]
     A --> E[Docker Compose e2e with fake MCP Vault]
 
     F[Nightly / manual] --> G[Real Cloud Temple S3 / Dell ECS]
@@ -79,12 +79,12 @@ Covers the acceptance tests of `Cloud-Temple/starter-kit#14`:
 
 Secretless: no key material is committed; everything is generated at test time.
 
-### 3. Docker Compose e2e with MinIO
+### 3. Docker Compose e2e with Moto S3
 
 File:
 
 ```text
-tests/e2e/test_minio_compose.py
+tests/e2e/test_s3_compose.py
 ```
 
 Compose stack:
@@ -93,14 +93,16 @@ Compose stack:
 boilerplate/docker-compose.ci.yml
 ```
 
-Validates the concrete flow through WAF + MCP + MinIO-backed S3TokenStore:
+Validates the concrete flow through WAF + MCP + Moto-backed S3TokenStore:
 
 1. health through WAF
 2. create token via `/admin/api/tokens`
-3. token is persisted in S3-compatible MinIO
+3. `_system/tokens.json` is read directly from Moto: the full token hash is
+   present, while the raw token and a `raw_token` field are absent
 4. call `/mcp` with created token
 5. revoke token via `/admin/api/tokens/{hash_prefix}`
-6. revoked token is refused
+6. the Moto object is read again and contains `revoked: true` plus `revoked_at`
+7. revoked token is refused
 
 ### 4. Docker Compose e2e with fake MCP Vault
 
@@ -150,14 +152,14 @@ Requires Docker.
 
 ```bash
 docker compose -f boilerplate/docker-compose.ci.yml up -d --build
-RUN_COMPOSE_E2E=1 python -m pytest tests/e2e/test_minio_compose.py -q
+RUN_COMPOSE_E2E=1 python -m pytest tests/e2e/test_s3_compose.py -q
 docker compose -f boilerplate/docker-compose.ci.yml down -v
 ```
 
 If the local default `python` is older than 3.10, use Python 3.11:
 
 ```bash
-RUN_COMPOSE_E2E=1 python3.11 -m pytest tests/e2e/test_minio_compose.py -q
+RUN_COMPOSE_E2E=1 python3.11 -m pytest tests/e2e/test_s3_compose.py -q
 ```
 
 ### Docker Compose e2e with fake MCP Vault
@@ -172,7 +174,8 @@ docker compose -f boilerplate/docker-compose.vault-ci.yml down -v
 
 ## Real S3 tests
 
-MinIO is used for default CI because it is reproducible and secretless.
+Moto S3 is used for default CI because it is maintained, reproducible and
+secretless. Its Python dependencies are hash-locked and audited independently.
 It does not replace real Cloud Temple / Dell ECS validation.
 
 Real S3 tests should run only in nightly/manual workflows using GitHub environment secrets (for example `nightly-real-s3`).
@@ -192,7 +195,7 @@ Reason: the dedicated Cloud Temple S3 test bucket uses a custom access policy wi
 Default CI therefore remains:
 
 ```text
-GitHub-hosted CI → MinIO only
+GitHub-hosted CI → Moto S3 only
 ```
 
 Real S3 validation should be run either:
@@ -250,4 +253,3 @@ RUN_LIVE_VAULT=1 python3.11 -m pytest tests/integration/test_live_vault_tokensto
 The test starts from an empty dedicated secret, exercises create/list/update/revoke, verifies that raw client tokens are not persisted, and restores the original secret data afterward.
 
 Credentials must be read from MCP Vault or a local secure channel and must never be committed to git.
-

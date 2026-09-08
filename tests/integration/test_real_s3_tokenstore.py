@@ -6,7 +6,7 @@ These tests are intended for nightly/manual GitHub Actions only, using the
 `nightly-real-s3` environment secrets. They must not run in PR/push default CI.
 
 They validate compatibility with the real Cloud Temple / Dell ECS S3 endpoint.
-MinIO e2e remains the default CI non-regression layer.
+Moto S3 e2e remains the default CI non-regression layer.
 """
 
 import json

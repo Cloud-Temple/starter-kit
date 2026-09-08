@@ -40,7 +40,6 @@
 #    - Le reverse proxy amont gère le TLS
 #
 # =============================================================================
-
 {
 	# Ordre des directives : rate_limit → WAF → reverse_proxy
 	order rate_limit first
@@ -52,7 +51,6 @@
 
 # SITE_ADDRESS est défini par la variable d'env (défaut: :8082)
 {$SITE_ADDRESS::8082} {
-
 	# =========================================================================
 	# Headers de Sécurité (appliqués à TOUTES les routes)
 	# =========================================================================
@@ -77,7 +75,7 @@
 	rate_limit {
 		zone mcp {
 			match {
-				path /mcp*
+				path /mcp /mcp/*
 			}
 			key {remote_host}
 			events 300
@@ -115,10 +113,12 @@
 	#
 	# Si vous avez besoin de bypasser le WAF pour d'autres routes
 	# (ex: upload de fichiers volumineux, code source dans le body),
-	# ajoutez un `handle /votre-route* { ... }` AVANT le bloc `handle { ... }`
+	# ajoutez un matcher nommé (`@route path /votre-route /votre-route/*`), puis
+	# un `handle @route { ... }` AVANT le bloc `handle { ... }`
 	# qui contient coraza_waf.
 	# =========================================================================
-	handle /mcp* {
+	@mcp path /mcp /mcp/*
+	handle @mcp {
 		# ⚠️ Adapter "mon-mcp" au nom de votre service dans docker-compose.yml
 		reverse_proxy mon-mcp:8002 {
 			flush_interval -1

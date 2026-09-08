@@ -9,19 +9,26 @@ on:
       - test/**
       - feat/**
 
+permissions:
+  contents: read
+
 jobs:
   unit-integration:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.11'
+          python-version: '3.11.16'
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip==26.2.1
           python -m pip install --require-hashes -r boilerplate/requirements.lock
-          python -m pip install pytest pytest-asyncio
+          python -m pip install pytest==9.1.1 pytest-asyncio==1.4.0 pip-audit==2.10.1
+      - name: Audit Python dependencies
+        run: |
+          python -m pip_audit -r boilerplate/requirements.lock
+          python -m pip_audit -r tests/fixtures/s3/requirements.lock
       - name: Run unit and ASGI integration tests
         run: |
           python -m pytest tests -q -m "not e2e"
@@ -39,32 +46,43 @@ jobs:
           done
           MCP_V1_PYTHON="$RUNNER_TEMP/mcp-v1/bin/python" MCP_V1_COMPAT_URL=http://127.0.0.1:18002/mcp python -m pytest tests/test_mcp_v1_compat.py -q
 
-  e2e-minio-compose:
+  e2e-s3-compose:
     runs-on: ubuntu-latest
     needs: unit-integration
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.11'
+          python-version: '3.11.16'
       - name: Install test dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip==26.2.1
           python -m pip install --require-hashes -r boilerplate/requirements.lock
-          python -m pip install pytest pytest-asyncio
-      - name: Start CI stack (WAF + MCP + MinIO)
+          python -m pip install pytest==9.1.1 pytest-asyncio==1.4.0
+      - name: Start CI stack (WAF + MCP + Moto S3)
         run: |
           docker compose -f boilerplate/docker-compose.ci.yml up -d --build
       - name: Show stack status
         run: |
           docker compose -f boilerplate/docker-compose.ci.yml ps
+      - name: Verify WAF runtime and modules
+        run: |
+          docker compose -f boilerplate/docker-compose.ci.yml exec -T waf caddy version | grep -F 'v2.11.4'
+          docker compose -f boilerplate/docker-compose.ci.yml exec -T waf caddy build-info | grep -E '^dep[[:space:]]+github\.com/corazawaf/coraza-caddy/v2[[:space:]]+v2\.5\.0'
+          docker compose -f boilerplate/docker-compose.ci.yml exec -T waf caddy build-info | grep -E '^dep[[:space:]]+github\.com/corazawaf/coraza/v3[[:space:]]+v3\.7\.0'
+          docker compose -f boilerplate/docker-compose.ci.yml exec -T waf caddy build-info | grep -E '^dep[[:space:]]+github\.com/corazawaf/coraza-coreruleset/v4[[:space:]]+v4\.25\.0'
+          docker compose -f boilerplate/docker-compose.ci.yml exec -T waf caddy build-info | grep -E '^dep[[:space:]]+github\.com/mholt/caddy-ratelimit[[:space:]]+v0\.1\.1-0\.20260612195517-5625512f24f6'
+          docker compose -f boilerplate/docker-compose.ci.yml exec -T waf caddy list-modules | grep -Fx 'http.handlers.waf'
+          docker compose -f boilerplate/docker-compose.ci.yml exec -T waf caddy list-modules | grep -Fx 'http.handlers.rate_limit'
+          docker compose -f boilerplate/docker-compose.ci.yml exec -T waf id -u | grep -vx '0'
+          docker compose -f boilerplate/docker-compose.ci.yml exec -T waf caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Run docker-compose e2e tests
         env:
           RUN_COMPOSE_E2E: '1'
           E2E_BASE_URL: http://localhost:8082
           E2E_ADMIN_BOOTSTRAP_KEY: test-ci-bootstrap-key
         run: |
-          python -m pytest tests/e2e/test_minio_compose.py -q
+          python -m pytest tests/e2e/test_s3_compose.py -q
       - name: Dump logs on failure
         if: failure()
         run: |
@@ -78,15 +96,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: unit-integration
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.11'
+          python-version: '3.11.16'
       - name: Install test dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip==26.2.1
           python -m pip install --require-hashes -r boilerplate/requirements.lock
-          python -m pip install pytest pytest-asyncio
+          python -m pip install pytest==9.1.1 pytest-asyncio==1.4.0
       - name: Start Vault CI stack (WAF + MCP + fake MCP Vault)
         run: |
           docker compose -f boilerplate/docker-compose.vault-ci.yml up -d --build

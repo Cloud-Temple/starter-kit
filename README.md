@@ -1,6 +1,6 @@
 # 🚀 Starter Kit — Créer un serveur MCP Cloud Temple
 
-> **Version actuelle :** [`v2.0.2`](https://github.com/Cloud-Temple/starter-kit/releases/tag/v2.0.2)
+> **Version actuelle :** `v2.0.3` (préparation)
 > — MCP Python SDK `2.1.1` — [Changelog](CHANGELOG.md)
 >
 > **Audience** : Assistant IA (Cline, Cursor, etc.) ou développeur humain.
@@ -185,8 +185,8 @@ dynamic values via `textContent`, not HTML interpolation. The app and WAF CSP us
 | Auth             | Bearer Token + mission_token ContextVars | Authentification request-scoped |
 | Token Store      | S3 + cache TTL 5min     | Persistance tokens (optionnel)      |
 | Console admin    | SPA HTML/JS             | Interface web d'administration      |
-| Conteneur        | Docker + Docker Compose | Déploiement                         |
-| WAF              | Caddy + Coraza          | TLS, rate limiting, OWASP CRS      |
+| Conteneur        | Python 3.11.16 + Docker Compose | Runtime applicatif non-root   |
+| WAF              | Caddy 2.11.4 + Coraza-Caddy 2.5.0 | TLS, rate limiting, OWASP CRS 4.25.0 |
 
 ---
 
@@ -605,9 +605,9 @@ Force les navigateurs à utiliser HTTPS même si l'utilisateur tape `http://`.
 On ne peut **pas** overrider `tx.allowed_methods` via directives après les `Include`.
 
 **Solution** : bypass `handle` en amont du WAF. Pour toute route qui nécessite
-un bypass (upload volumineux, code source dans le body, méthodes DELETE bloquées
-par CRS), ajouter un `handle /votre-route* { ... }` AVANT le bloc
-`handle { ... }` qui contient `coraza_waf`.
+un bypass (upload volumineux, code source dans le body), définir un matcher
+borné `@route path /votre-route /votre-route/*`, puis un `handle @route { ... }`
+AVANT le bloc `handle { ... }` qui contient `coraza_waf`.
 
 ### 8bis.9 Outil `system_whoami` (inclus dans le boilerplate)
 
@@ -642,6 +642,9 @@ services:
     build: ./waf
     ports:
       - "${WAF_PORT:-8082}:8082"
+    volumes:
+      - ./waf/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
     depends_on:
       - mon-mcp
     networks:
@@ -658,10 +661,23 @@ services:
 networks:
   mcp-net:
     driver: bridge
+
+volumes:
+  caddy-data:
 ```
 
 **Important** : le service MCP utilise `expose` (pas `ports`) — il n'est
 pas accessible directement. Tout le trafic passe par le WAF.
+
+Les images de runtime utilisent des versions explicites, verrouillées par
+digest SHA-256 : Python `3.11.16`,
+Caddy `2.11.4`, Coraza-Caddy `2.5.0` (Coraza `3.7.0`, OWASP CRS `4.25.0`) et
+Alpine `3.23`. Les plugins `xcaddy` et les modules Go corrigés sont eux aussi
+figés ; aucun tag d'image de conteneur `latest` n'est accepté. La fixture S3 CI
+repose sur Moto `5.2.3`, construit en non-root avec son propre lock. Les deux locks Python avec
+hashes sont audités par `pip-audit` dans la CI. Les mises à jour de sécurité
+restent volontaires : modifier un pin, reconstruire, scanner, tester, puis
+consigner le changement dans DESIGN et le Changelog.
 
 ---
 
@@ -725,7 +741,7 @@ boilerplate/
 ├── requirements.lock        # résolution Python 3.11 avec hashes
 ├── .env.example             # Variables d'environnement documentées
 ├── .gitignore               # Python, IDE, OS, secrets
-├── VERSION                  # 2.0.2
+├── VERSION                  # 2.0.3
 └── README.md                # Guide de démarrage rapide
 ```
 
