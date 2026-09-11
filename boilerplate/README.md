@@ -2,6 +2,11 @@
 
 > Service MCP Cloud Temple — [décrire le domaine métier ici].
 
+Avant tout travail courant avec un agent IA, configurer et vérifier sa
+[mémoire externe obligatoire](#configurer-la-mémoire-externe-obligatoire).
+Ce prérequis concerne le harnais de développement ; il n'ajoute pas de dépendance
+mémoire au serveur MCP lancé ci-dessous.
+
 ## Démarrage rapide
 
 ### 1. Configuration
@@ -20,7 +25,7 @@ docker compose up -d
 
 # Vérification
 curl http://localhost:8082/health
-# → {"status":"healthy","service":"mon-mcp-service","version":"2.0.3"}
+# → {"status":"healthy","service":"mon-mcp-service","version":"2.0.4"}
 
 # Console d'administration (logo Cloud Temple + sidebar)
 open http://localhost:8082/admin
@@ -118,9 +123,12 @@ un port interne non privilégié (`8082`).
 
 ```
 boilerplate/
-├── AGENTS.md                 # Bootstrap commun vers DESIGN/AGENTIC_RULES/
+├── AGENTS.md                 # Bootstrap commun vers AGENTIC_RULES/
 ├── CLAUDE.md                 # Import du bootstrap pour Claude Code
 ├── QWEN.md                   # Compléments éventuels propres à Qwen Code
+├── AGENTIC_RULES/             # Règles partagées ; mémoire externe obligatoire
+│   ├── MAIN_RULES.md          # Point d'entrée et index de lecture
+│   └── PROJECT_RULES.md       # Configuration et protocole mémoire
 ├── src/mon_service/
 │   ├── server.py              # Outils MCP + pile ASGI + bannière
 │   ├── config.py              # pydantic-settings (S3, WAF, auth)
@@ -158,9 +166,7 @@ boilerplate/
 │   ├── Dockerfile             # Caddy + Coraza
 │   └── Caddyfile              # OWASP CRS + HSTS + rate limiting
 ├── DESIGN/
-│   ├── ARCHITECTURE.md        # Schémas + décisions architecturales
-│   └── AGENTIC_RULES/         # Règles agentiques à adapter au projet
-│       └── MAIN_RULES.md      # Point d'entrée des règles projet
+│   └── ARCHITECTURE.md        # Schémas + décisions architecturales
 ├── CHANGELOG.md               # Historique des versions
 ├── Dockerfile
 ├── docker-compose.yml
@@ -248,112 +254,131 @@ Pour chaque outil, modifier **4 fichiers** :
 3. **`commands.py`** — Commande Click avec `@cli.command("mon-outil")`
 4. **`shell.py`** — Handler `cmd_mon_outil()` + dispatch + autocomplétion
 
-Voir le guide complet : [Starter Kit MCP Cloud Temple](../README.md)
+Voir le guide complet : [Starter Kit MCP Cloud Temple](https://github.com/Cloud-Temple/starter-kit#readme)
 
 ---
 
 ## Règles agentiques du projet
 
-### Pourquoi ?
+### Pourquoi et où commencer ?
 
-Une session d'agent IA démarre sans connaître les usages implicites de
-l'équipe. Le code décrit l'application, mais pas nécessairement le workflow
-Git, les validations attendues, les décisions d'architecture, les exigences de
-sécurité ou les gates humains. Les **Agentic Rules** versionnent ce cadre avec
-le dépôt pour que chaque agent commence avec les mêmes consignes.
+Les **Agentic Rules** donnent à chaque session le même cadre : sources de vérité,
+workflow Git, sécurité, tests et validations. La mémoire externe conserve les
+décisions et le contexte entre les sessions ; les règles disent comment l'utiliser.
+**Le harnais agentique ne doit jamais fonctionner sans mémoire externe.**
 
-Ces règles orientent le modèle ; elles ne remplacent pas les contrôles
-techniques. Les permissions, hooks, tests CI et protections de branche restent
-nécessaires pour garantir une interdiction.
+[`AGENTS.md`](AGENTS.md) demande de lire
+[`AGENTIC_RULES/MAIN_RULES.md`](AGENTIC_RULES/MAIN_RULES.md), puis
+[`PROJECT_RULES.md`](AGENTIC_RULES/PROJECT_RULES.md) pour le démarrage mémoire
+obligatoire. L'index indique ensuite les compléments utiles à la tâche ; il
+n'impose pas de charger tout le corpus systématiquement.
 
-### Comment cela fonctionne ?
+[`CLAUDE.md`](CLAUDE.md) importe `@AGENTS.md` et
+[`QWEN.md`](QWEN.md) rappelle le point d'entrée commun. Conserver ces fichiers
+courts : les règles détaillées restent uniquement dans `AGENTIC_RULES/`, à la
+racine du projet, et non sous DESIGN.
 
-Le dispositif utilise deux niveaux :
+Pour le chargement propre à chaque outil, consulter les guides officiels :
+[Codex — AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md),
+[Claude Code — mémoire](https://code.claude.com/docs/en/memory) et
+[Qwen Code — mémoire](https://qwenlm.github.io/qwen-code-docs/en/users/features/memory/).
 
-- un petit fichier racine reconnu par l'outil (`AGENTS.md`, `CLAUDE.md` ou
-  `QWEN.md`) amorce la lecture ;
-- [`DESIGN/AGENTIC_RULES/`](DESIGN/AGENTIC_RULES/) reste l'unique source
-  canonique des règles détaillées, avec
-  [`MAIN_RULES.md`](DESIGN/AGENTIC_RULES/MAIN_RULES.md) comme point d'entrée.
+Ces consignes orientent le modèle, sans remplacer les permissions techniques,
+la CI ni les protections de branche.
 
-Ne pas recopier le corpus dans chaque fichier d'outil : les copies finiraient
-par diverger. Un simple lien Markdown n'étant pas suivi automatiquement par
-tous les agents, le bootstrap doit leur demander explicitement de lire les
-fichiers.
+### Configurer la mémoire externe obligatoire
 
-### Bootstraps fournis
+Le protocole canonique est dans [`PROJECT_RULES.md`](AGENTIC_RULES/PROJECT_RULES.md).
+Avant toute tâche courante confiée à un agent :
 
-Le fichier [`AGENTS.md`](AGENTS.md) fourni à la racine contient :
+1. Faire configurer dans son client un serveur MCP Live Memory autorisé pour
+   les données du projet et un espace persistant dédié, avec accès en lecture
+   et en écriture. La copie du boilerplate ne les crée pas.
+2. Remplacer **toutes les occurrences** des marqueurs ci-dessous dans
+   `PROJECT_RULES.md`, y compris dans les exemples d'appels.
+3. Exécuter la procédure « Au démarrage » de ce fichier. À l'installation,
+   enregistrer une première note utile de cadrage et la relire pour vérifier
+   l'écriture réelle. Un espace nouvellement créé peut être vide ; un identifiant
+   fictif ou un espace inaccessible n'est jamais acceptable.
+4. Garder les règles partagées dans Git, mais les secrets de connexion dans la
+   configuration du client MCP ou le coffre.
 
-```markdown
-# Instructions des agents
+| Marqueur | Valeur à fournir |
+| --- | --- |
+| `{{LIVE_MCP_SERVER}}` | Nom exact du serveur MCP Live Memory configuré dans le client |
+| `{{SPACE_ID}}` | Identifiant réel de l'espace Live Memory du projet |
+| `{{GRAPH_MCP_SERVER}}` | Nom du serveur MCP Graph Memory pour l'index documentaire |
+| `{{GRAPH_MEMORY_ID}}` | Identifiant réel de cet index Graph Memory |
 
-Les règles canoniques du projet se trouvent dans `DESIGN/AGENTIC_RULES/`.
+Live Memory est la mémoire de travail **obligatoire**. Graph Memory est son
+complément documentaire : si le projet n'utilise pas cet index, retirer sa
+ligne de configuration et sa section de procédure, jamais Live Memory.
+Aucun marqueur non renseigné ne doit subsister dans les procédures installées.
 
-Avant toute action dans ce dépôt :
+En cas d'absence ou de panne de Live Memory, y compris un échec d'écriture en
+cours de session, appliquer la section « Mémoire absente ou en panne » de
+`PROJECT_RULES.md` : arrêt du travail courant, diagnostic/rétablissement bornés,
+puis rechargement du contexte avant reprise. Aucun repli sur le chat ou le dépôt.
 
-1. Lire `DESIGN/AGENTIC_RULES/MAIN_RULES.md`.
-2. Lire les autres fichiers Markdown de `DESIGN/AGENTIC_RULES/`.
-3. Appliquer ces règles à l'ensemble du dépôt.
+Références des services :
+[Live Memory](https://github.com/Cloud-Temple/live-memory) et
+[Graph Memory](https://github.com/Cloud-Temple/graph-memory).
 
-Ne pas dupliquer les règles détaillées ici : modifier leur fichier canonique.
-```
+### Adapter et vérifier les workflows
 
-Compatibilité des principaux agents :
+| Fichier dans `AGENTIC_RULES/` | Rôle |
+| --- | --- |
+| `MAIN_RULES.md` | Socle, mémoire obligatoire, index et autorisation humaine |
+| `PROJECT_RULES.md` | Identifiants du projet et protocole mémoire |
+| `WORKFLOW_ENGINEERING.md` | Tests et revues proportionnés aux effets du changement |
+| `WORKFLOW_GIT.md` | Branches, issues, PR et merge |
+| `WORKFLOW_GIT_EPIC.md` | Complément pour EPIC, Project ou train RC existants |
 
-| Outil | Comportement | Fichier complémentaire |
-| ----- | ------------ | ---------------------- |
-| Codex | Charge nativement le `AGENTS.md` racine et les instructions plus proches du répertoire de travail | Aucun dans le cas courant |
-| Claude Code | Charge `CLAUDE.md`, pas directement `AGENTS.md` | Le fichier fourni contient uniquement `@AGENTS.md` |
-| Qwen Code | Charge nativement `AGENTS.md` ainsi que ses éventuels `QWEN.md` | `QWEN.md` uniquement pour des consignes propres à Qwen, sans recopier les règles communes |
+Le merge d'une PR est le seul GO humain ajouté par ce corpus. Les autres
+opérations doivent rester dans le mandat ; une demande de modification locale
+n'autorise pas implicitement une release ou un déploiement. Les permissions
+techniques et le prérequis mémoire continuent de s'appliquer.
 
-Les fichiers [`CLAUDE.md`](CLAUDE.md) et [`QWEN.md`](QWEN.md) sont également
-fournis. Le premier importe `@AGENTS.md` ; le second rappelle que Qwen charge
-déjà le bootstrap commun et doit réserver `QWEN.md` à ses consignes propres.
+Adapter les conventions et le relecteur à la réalité du projet. Le flux nominal
+est une PR vers `main` ; ne pas créer de Project ou de train RC pour satisfaire
+le template. Une revue du plan et du résultat est requise pour les changements
+sensibles, dont les règles de pilotage elles-mêmes.
 
-Références officielles :
+Après installation ou modification, ouvrir une nouvelle session et demander les
+sources chargées ainsi que le résultat réel du démarrage mémoire, sans secret.
+Vérifier aussi que les cinq fichiers de règles ne sont pas ignorés par Git.
 
-- [Codex — Custom instructions with AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
-- [Claude Code — How Claude remembers your project](https://code.claude.com/docs/en/memory)
-- [Qwen Code — Memory and QWEN.md](https://qwenlm.github.io/qwen-code-docs/en/users/features/memory/)
+### Migrer les anciennes règles
 
-Dans un monorepo, réserver les fichiers imbriqués aux sous-répertoires ayant de
-véritables règles spécifiques. Les instructions plus proches du code peuvent
-compléter ou surcharger celles de la racine selon l'outil.
+Dans un projet existant, sauvegarder ou versionner les personnalisations avant
+de remplacer le corpus. Reporter chaque consigne encore pertinente dans le
+nouveau fichier correspondant, puis faire relire le résultat.
 
-### Adapter les règles fournies
+| Ancien fichier sous `DESIGN/AGENTIC_RULES/` | Nouveau fichier sous `AGENTIC_RULES/` |
+| --- | --- |
+| `MAIN_RULES.md` | `MAIN_RULES.md` |
+| `WORKSPACE_ADVANCE_RULES.md` | `PROJECT_RULES.md` |
+| `WORKFLOW_ENGINEERING.md` | `WORKFLOW_ENGINEERING.md` |
+| `WORKFLOW_GIT.md` | `WORKFLOW_GIT.md` |
+| `WORKFLOW_GIT_EPIC.md` | `WORKFLOW_GIT_EPIC.md` |
 
-Dans ces règles, le répertoire est virtualisé par `{AGENTIC_RULES_DIR}`. La
-valeur par défaut est `DESIGN/AGENTIC_RULES`, à adapter si le projet déplace ses
-règles.
+Transférer les valeurs mémoire existantes : l'ancien `SPACE` devient
+`{{SPACE_ID}}` ; les trois autres marqueurs gardent leur nom. Ne jamais
+remplacer un identifiant réel par celui d'un autre projet.
 
-| Fichier | À adapter pour le projet |
-| ------- | ------------------------ |
-| `DESIGN/AGENTIC_RULES/MAIN_RULES.md` | Point d'entrée des règles projet, obligations non négociables et index |
-| `DESIGN/AGENTIC_RULES/WORKSPACE_ADVANCE_RULES.md` | Live Memory, Graph Memory, identifiants `SPACE` / `GRAPH_MEMORY_ID`, protocole de consolidation |
-| `DESIGN/AGENTIC_RULES/WORKFLOW_ENGINEERING.md` | Reviewer indépendant, cycle adversarial, tests RED/GREEN non complaisants |
-| `DESIGN/AGENTIC_RULES/WORKFLOW_GIT.md` | Branches, issues, PR, liens GitHub, règles de merge |
-| `DESIGN/AGENTIC_RULES/WORKFLOW_GIT_EPIC.md` | EPIC, RC flow, statuts Project, gates humains |
+Mettre à jour les fichiers d'entrée et tous les renvois au corpus. Les chemins
+sont désormais explicites : l'ancienne variable `{AGENTIC_RULES_DIR}` est retirée.
+Vérifier le démarrage mémoire avant de retirer l'ancien dossier et ne pas garder
+deux versions actives des règles.
 
-Le modèle mémoire sépare :
-
-- **Live Memory** : contexte court de session, notes atomiques, consolidation.
-- **Graph Memory** : index sémantique durable des documents canoniques.
-- **Repository files** : source finale de vérité.
-
-Références Cloud Temple :
-
-- [Cloud-Temple/live-memory](https://github.com/Cloud-Temple/live-memory)
-- [Cloud-Temple/graph-memory](https://github.com/Cloud-Temple/graph-memory)
-
-Avant de rendre ces règles obligatoires, remplacer les placeholders du template
-par les valeurs du projet. Ne jamais versionner de token, endpoint sensible ou
-secret MCP dans ces fichiers.
-
-Après toute modification, ouvrir une nouvelle session à la racine et vérifier
-les instructions chargées : demander un résumé des sources avec Codex et Qwen
-Code ; avec Claude Code, contrôler `CLAUDE.md` dans `/context`, puis demander un
-résumé des règles importées depuis `AGENTS.md`.
+La migration remplace les GO externes systématiques par un GO au merge seulement
+(dans les limites du mandat), autorise la consolidation selon le protocole mémoire,
+retire le modèle de revue imposé et les doubles revues de contenu inchangé,
+et rend EPIC/RC conditionnels. Conserver explicitement les contrôles plus stricts
+que le projet exige, sans perdre l'obligation de mémoire externe.
+Le nouveau corpus n'impose pas de nouveau seuil de couverture CI : conserver
+les seuils et contrôles déjà requis par le projet, sans les affaiblir lors de
+la migration.
 
 ---
 

@@ -155,18 +155,35 @@ src/mon_service/
 ### Règles agentiques livrées
 
 ```
-DESIGN/AGENTIC_RULES/
+AGENTIC_RULES/
 ├── MAIN_RULES.md                    # Point d'entrée des règles projet
-├── WORKSPACE_ADVANCE_RULES.md       # Live Memory + Graph Memory
+├── PROJECT_RULES.md                 # Mémoire externe obligatoire + configuration
 ├── WORKFLOW_ENGINEERING.md          # Review adversariale + tests
 ├── WORKFLOW_GIT.md                  # Branches, issues, PR
 └── WORKFLOW_GIT_EPIC.md             # EPIC, RC flow, gates humains
 ```
 
-Ces fichiers sont des templates à adapter dans le projet dérivé. Ils relient le
-travail des agents IA à Live Memory pour le contexte court, à Graph Memory pour
-l'index sémantique durable, et aux fichiers du repository comme source finale
-de vérité.
+Le corpus est placé à la racine du projet, séparé de DESIGN qui documente la
+conception du logiciel. Les fichiers racine AGENTS.md, CLAUDE.md et QWEN.md
+dirigent vers ce corpus unique. MAIN_RULES indexe les compléments par tâche ;
+PROJECT_RULES porte le protocole et les identifiants mémoire à adapter.
+
+Live Memory est un prérequis externe obligatoire du harnais agentique, en
+lecture et en écriture. Sans accès valide, le travail courant s'arrête ; seules
+les actions bornées de diagnostic/rétablissement définies dans
+[`PROJECT_RULES.md`](../AGENTIC_RULES/PROJECT_RULES.md) restent possibles.
+Graph Memory complète Live Memory pour retrouver les documents canoniques ;
+les fichiers du dépôt restent la source de vérité détaillée. Aucun secret
+ne doit figurer dans les règles ni dans les notes mémoire.
+
+Ce prérequis s'applique au harnais de développement, pas au runtime du serveur
+MCP : aucune dépendance mémoire n'est ajoutée à Docker Compose ou à la pile ASGI.
+Les workflows prévoient une revue selon le risque et un GO humain au merge ;
+EPIC, Project et RC ne sont utilisés que s'ils répondent à un besoin réel.
+Les règles ne confèrent aucune permission technique.
+
+Pour remplacer l'ancien corpus sous DESIGN en conservant les personnalisations,
+suivre la [migration des règles](../README.md#migrer-les-anciennes-règles).
 
 ---
 

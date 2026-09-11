@@ -26,6 +26,30 @@ mcp-tools
 mcp-office
 ```
 
+### Préparer le harnais agentique avant de travailler
+
+Pour un nouveau dossier, depuis le répertoire parent du starter-kit :
+
+```bash
+mkdir mon-projet
+cp -R starter-kit/boilerplate/. mon-projet/
+```
+
+Cette copie inclut les fichiers cachés. Un fork ou un dépôt créé avec le template
+GitHub conserve, lui, la structure du starter-kit : le projet applicatif reste
+dans `boilerplate/` tant que son contenu n'a pas été placé à la racine du projet
+cible. Ne pas écraser des fichiers existants sans comparaison.
+
+Les règles se trouvent dans `AGENTIC_RULES/` à la racine du projet généré.
+Avant de confier à un agent le renommage, le code ou les autres tâches courantes,
+configurer sa **mémoire externe Live Memory obligatoire**, adapter
+`AGENTIC_RULES/PROJECT_RULES.md` et vérifier les accès réels en lecture/écriture.
+Sans mémoire opérationnelle, seul son diagnostic/rétablissement est permis.
+
+Suivre le [guide mémoire et règles du boilerplate](../boilerplate/README.md#configurer-la-mémoire-externe-obligatoire).
+La copie des fichiers ne configure pas les serveurs MCP ni l'espace mémoire.
+Ce prérequis concerne le harnais agentique, pas le runtime du serveur métier.
+
 ## 2. Renommer le service
 
 À adapter :
@@ -213,6 +237,7 @@ Authorization: Bearer <MCP_CLIENT_TOKEN>
 ## 10. Checklist avant production
 
 - [ ] package renommé proprement ;
+- [ ] règles agentiques adaptées et mémoire externe du harnais vérifiée en lecture/écriture ;
 - [ ] service name configuré ;
 - [ ] branding choisi ;
 - [ ] `/health` OK ;

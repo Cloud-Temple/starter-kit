@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.0.4 — 2026-09-11 — Agentic rules refresh
+
+### Changed
+
+- Replaced the previous `boilerplate/DESIGN/AGENTIC_RULES/` corpus with the
+  simplified rules under `boilerplate/AGENTIC_RULES/`, directly at the generated
+  project root. `PROJECT_RULES.md` replaces `WORKSPACE_ADVANCE_RULES.md`.
+- Kept external Live Memory mandatory: missing configuration, failed context
+  loading or failed required writes stop ordinary agent work, including local
+  work. Only bounded memory diagnosis and recovery remain permitted.
+- Adopted task-based rule loading, risk-based independent reviews and an
+  optional EPIC/Project/RC workflow; removed the hard-coded reviewer model and
+  duplicate reviews of unchanged content.
+- Changed the template's human-approval policy explicitly: a GO remains required
+  for each PR merge, including RC targets. Pushes, issues, PRs, Project updates
+  and memory consolidation no longer require separate GO requests within the
+  mandate. Releases, deployments and operations require an existing delivery
+  mandate; this policy grants no technical permission or out-of-scope authority.
+
+### Documentation
+
+- Updated the agent entry files, both READMEs, the project-creation guide and
+  DESIGN with mandatory memory setup, real access checks and migration steps
+  preserving project-specific rules and memory identifiers.
+- Aligned version `2.0.4`, README release links and release metadata.
+  No MCP application or dependency change.
+
+---
+
 ## v2.0.3 — 2026-09-08 — Security version hardening
 
 ### Security
