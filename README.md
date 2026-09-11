@@ -1,6 +1,6 @@
 # 🚀 Starter Kit — Créer un serveur MCP Cloud Temple
 
-> **Version actuelle :** [`v2.0.3`](https://github.com/Cloud-Temple/starter-kit/releases/tag/v2.0.3)
+> **Version actuelle :** [`v2.0.4`](https://github.com/Cloud-Temple/starter-kit/releases/tag/v2.0.4)
 > — MCP Python SDK `2.1.1` — [Changelog](CHANGELOG.md)
 >
 > **Audience** : Assistant IA (Cline, Cursor, etc.) ou développeur humain.
@@ -18,6 +18,13 @@
 ---
 
 ## Documentation opérationnelle
+
+**Règles agentiques à jour :** le corpus fourni se trouve dans
+[`boilerplate/AGENTIC_RULES/`](boilerplate/AGENTIC_RULES/), puis dans
+`AGENTIC_RULES/` à la racine du projet créé. Il remplace l'ancien dossier sous
+DESIGN. Commencer par `MAIN_RULES.md`, puis configurer la **mémoire externe
+obligatoire** dans `PROJECT_RULES.md` avant tout travail courant de l'agent.
+Voir [le fonctionnement et l'installation](#11-règles-agentiques-pour-projets-dérivés).
 
 | Besoin | Document |
 |---|---|
@@ -687,9 +694,12 @@ Le dossier [`boilerplate/`](boilerplate/) contient un **projet MCP complet et fo
 
 ```
 boilerplate/
-├── AGENTS.md               # Bootstrap commun vers DESIGN/AGENTIC_RULES/
+├── AGENTS.md               # Bootstrap commun vers AGENTIC_RULES/
 ├── CLAUDE.md               # Import du bootstrap pour Claude Code
 ├── QWEN.md                 # Compléments éventuels propres à Qwen Code
+├── AGENTIC_RULES/           # Règles partagées ; mémoire externe obligatoire
+│   ├── MAIN_RULES.md        # Point d'entrée et index de lecture
+│   └── PROJECT_RULES.md     # Configuration et protocole mémoire
 ├── src/mon_service/
 │   ├── __init__.py
 │   ├── __main__.py          # python -m mon_service
@@ -731,9 +741,7 @@ boilerplate/
 │   ├── Dockerfile           # Caddy + Coraza WAF + Rate Limiting
 │   └── Caddyfile            # Config WAF : reverse proxy + OWASP CRS + HSTS
 ├── DESIGN/
-│   ├── ARCHITECTURE.md      # Schéma architecture + décisions + sécurité
-│   └── AGENTIC_RULES/       # Templates de règles pour agents IA du projet dérivé
-│       └── MAIN_RULES.md    # Point d'entrée des règles projet générées
+│   └── ARCHITECTURE.md      # Schéma architecture + décisions + sécurité
 ├── CHANGELOG.md             # Historique des versions (format SemVer)
 ├── Dockerfile               # Python 3.11, utilisateur non-root
 ├── docker-compose.yml       # WAF (port 8082) → MCP (port 8002, interne)
@@ -741,7 +749,7 @@ boilerplate/
 ├── requirements.lock        # résolution Python 3.11 avec hashes
 ├── .env.example             # Variables d'environnement documentées
 ├── .gitignore               # Python, IDE, OS, secrets
-├── VERSION                  # 2.0.3
+├── VERSION                  # 2.0.4
 └── README.md                # Guide de démarrage rapide
 ```
 
@@ -750,7 +758,7 @@ boilerplate/
 2. Renommer `mon_service` → votre nom de service
 3. Adapter `config.py` avec vos variables d'environnement
 4. Vérifier les bootstraps `AGENTS.md`, `CLAUDE.md` et `QWEN.md` fournis à la racine
-5. Adapter `DESIGN/AGENTIC_RULES/MAIN_RULES.md` et les autres règles agentiques avec les identifiants mémoire et le workflow du projet
+5. Configurer et vérifier la mémoire externe obligatoire dans `AGENTIC_RULES/PROJECT_RULES.md` avant tout travail courant de l'agent, puis adapter les workflows
 6. Ajouter vos services métier dans `src/mon_service/core/`
 7. Ajouter vos outils MCP dans `server.py`
 8. Pour chaque outil : compléter display.py → commands.py → shell.py
@@ -761,168 +769,123 @@ boilerplate/
 
 ### 11.1 Pourquoi des « Agentic Rules » ?
 
-Un agent IA peut lire le code et en déduire ce que fait l'application, mais il
-ne peut pas deviner de façon fiable les règles de l'équipe : workflow Git,
-commandes de validation, exigences de sécurité, décisions d'architecture,
-gates humains ou sources de vérité. De plus, chaque nouvelle session repart
-avec un contexte neuf.
+Un agent IA peut lire le code, mais ne peut pas deviner les usages de l'équipe :
+workflow Git, validations, exigences de sécurité, décisions et sources de vérité.
+Les **Agentic Rules** versionnent ces consignes avec le code, pour ne pas les
+répéter dans chaque prompt et pour pouvoir les faire évoluer en revue.
 
-Les **Agentic Rules** transforment ce savoir implicite en instructions Markdown
-versionnées avec le code. Elles servent à :
+La mémoire externe conserve le contexte entre les sessions ; les règles
+expliquent comment la consulter et l'alimenter. **Un harnais sans mémoire
+externe est interdit.** Le contexte du chat et les fichiers locaux ne remplacent
+pas cette mémoire.
 
-- donner le même cadre de travail à chaque session et à chaque contributeur ;
-- éviter de répéter les mêmes consignes dans chaque prompt ;
-- rendre les règles relisibles en revue de code et historisées par Git ;
-- imposer une lecture préalable des décisions, workflows et contraintes du
-  projet avant toute modification ;
-- garder les règles indépendantes de l'outil utilisé autant que possible.
+Les fichiers de [`boilerplate/AGENTIC_RULES/`](boilerplate/AGENTIC_RULES/)
+sont les modèles destinés aux projets dérivés, pas les règles de maintenance du
+starter-kit lui-même. Leur configuration doit être adaptée avant utilisation.
 
-Dans ce dépôt, les fichiers sous `boilerplate/DESIGN/AGENTIC_RULES/` sont les
-modèles destinés aux projets dérivés. Ils ne définissent pas les règles de
-maintenance du starter-kit lui-même.
+Ces consignes guident le modèle ; ce ne sont pas des barrières de sécurité.
+Les permissions, la CI et les protections de branche restent nécessaires pour
+garantir techniquement une interdiction.
 
-Ces fichiers **guident le comportement du modèle** ; ils ne constituent pas une
-barrière de sécurité. Une interdiction qui doit être techniquement garantie
-reste à appliquer par les permissions de l'agent, les hooks, la CI, la
-protection de branche ou les contrôles de la plateforme.
+### 11.2 Où commencer ?
 
-### 11.2 Le modèle : un point d'amorçage, une seule source de vérité
-
-La structure fournie au projet dérivé sépare volontairement deux niveaux :
+Après copie du contenu de `boilerplate/`, le nouveau projet contient :
 
 ```text
-AGENTS.md                         # Petit fichier chargé automatiquement
-CLAUDE.md                         # Adaptateur Claude Code, si utilisé
-QWEN.md                           # Compléments Qwen Code éventuels
-DESIGN/AGENTIC_RULES/
-├── MAIN_RULES.md                 # Point d'entrée canonique
-├── WORKSPACE_ADVANCE_RULES.md
-├── WORKFLOW_ENGINEERING.md
-├── WORKFLOW_GIT.md
-└── WORKFLOW_GIT_EPIC.md
+AGENTS.md                         # Point d'entrée commun
+CLAUDE.md                         # Import du point d'entrée commun
+QWEN.md                           # Compléments propres à Qwen
+AGENTIC_RULES/
+├── MAIN_RULES.md                 # Socle commun et index de lecture
+├── PROJECT_RULES.md              # Configuration et protocole mémoire
+├── WORKFLOW_ENGINEERING.md       # Vérifications et revue selon le risque
+├── WORKFLOW_GIT.md               # Branches, issues, PR et merge
+└── WORKFLOW_GIT_EPIC.md          # EPIC, Project et RC si utilisés
+DESIGN/
+└── ARCHITECTURE.md               # Conception du logiciel
 ```
 
-- Le fichier racine propre à l'agent est le **bootstrap** : il est court et lui
-  dit où lire les règles du projet.
-- `DESIGN/AGENTIC_RULES/` est la **source canonique** : les règles détaillées y
-  sont organisées par thème et partagées par tous les agents.
+Le petit fichier racine reconnu par l'agent lui demande de lire
+`AGENTIC_RULES/MAIN_RULES.md`, puis `PROJECT_RULES.md` pour démarrer la mémoire.
+Les autres compléments sont chargés selon la tâche, sans tout relire à chaque
+message. Un simple lien Markdown ne garantit pas la lecture : le point d'entrée
+donne une instruction explicite.
 
-Le bootstrap ne doit pas recopier les règles. Les dupliquer dans `AGENTS.md`,
-`CLAUDE.md` et `QWEN.md` créerait trois versions susceptibles de diverger.
-Pointer vers un fichier signifie ici donner une instruction explicite pour le
-lire ; un simple lien Markdown n'est pas interprété automatiquement par tous
-les outils.
+Les règles détaillées n'existent qu'à un endroit : **`AGENTIC_RULES/`, directement
+à la racine du projet généré**. Pas de copie sous DESIGN, pas de répertoire
+`.clinerules/` à installer, pas de variable de chemin à remplacer.
 
-Dans le boilerplate, ce répertoire est virtualisé par
-`{AGENTIC_RULES_DIR}`. Sa valeur par défaut est `DESIGN/AGENTIC_RULES`. Un
-projet qui déplace les règles doit remplacer cette valeur partout de manière
-cohérente.
+### 11.3 Installer et configurer
 
-### 11.3 Fichiers reconnus par Codex, Claude Code et Qwen Code
+Depuis le répertoire parent du starter-kit, vers un **nouveau dossier** :
 
-| Outil | Fichier projet natif | Configuration recommandée |
-| ----- | -------------------- | -------------------------- |
-| Codex | `AGENTS.md` | Le fichier fourni à la racine fait lire `DESIGN/AGENTIC_RULES/MAIN_RULES.md`, puis les autres règles |
-| Claude Code | `CLAUDE.md` ou `.claude/CLAUDE.md` | Le `CLAUDE.md` fourni importe `@AGENTS.md` ; Claude Code ne charge pas directement `AGENTS.md` |
-| Qwen Code | `QWEN.md` et `AGENTS.md` | Le `AGENTS.md` fourni reste le bootstrap commun ; `QWEN.md` ne contient que les consignes propres à Qwen |
-
-Codex découvre les instructions du dépôt depuis sa racine jusqu'au répertoire
-de travail. Une règle plus proche du code concerné est lue après la règle
-racine ; `AGENTS.override.md` permet une surcharge locale. Dans le cas normal
-du starter-kit, un seul `AGENTS.md` racine suffit. Les fichiers imbriqués sont à
-réserver aux sous-arbres qui ont réellement des contraintes différentes.
-
-Claude Code charge `CLAUDE.md`, pas `AGENTS.md`. Son import `@AGENTS.md` permet
-de réutiliser le bootstrap commun sans copie. Qwen Code charge nativement le
-`AGENTS.md` présent dans le dépôt et charge également ses éventuels `QWEN.md`.
-Il ne faut donc pas réimporter les mêmes règles dans `QWEN.md`.
-
-Références officielles :
-
-- [Codex — Custom instructions with AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
-- [Claude Code — How Claude remembers your project](https://code.claude.com/docs/en/memory)
-- [Qwen Code — Memory and QWEN.md](https://qwenlm.github.io/qwen-code-docs/en/users/features/memory/)
-
-### 11.4 Bootstraps fournis dans un projet dérivé
-
-Après avoir copié le contenu de `boilerplate/` à la racine du nouveau dépôt,
-le fichier [`AGENTS.md`](boilerplate/AGENTS.md) contient déjà :
-
-```markdown
-# Instructions des agents
-
-Les règles canoniques du projet se trouvent dans `DESIGN/AGENTIC_RULES/`.
-
-Avant toute action dans ce dépôt :
-
-1. Lire `DESIGN/AGENTIC_RULES/MAIN_RULES.md`.
-2. Lire les autres fichiers Markdown de `DESIGN/AGENTIC_RULES/`.
-3. Appliquer ces règles à l'ensemble du dépôt.
-
-Ne pas dupliquer les règles détaillées ici : modifier leur fichier canonique.
+```bash
+mkdir mon-projet
+cp -R starter-kit/boilerplate/. mon-projet/
 ```
 
-Le fichier [`CLAUDE.md`](boilerplate/CLAUDE.md) importe ce bootstrap commun pour
-Claude Code :
+Le suffixe `/.` copie aussi les fichiers cachés utiles, notamment `.env.example`
+et `.gitignore`. Dans un dépôt existant, comparer les fichiers avant toute copie
+pour conserver ses personnalisations.
 
-```markdown
-@AGENTS.md
-```
+Avant de confier le travail courant à un agent :
 
-Qwen Code lit déjà `AGENTS.md`. Le fichier [`QWEN.md`](boilerplate/QWEN.md)
-fourni rappelle donc cette source commune et réserve son contenu aux rares
-instructions propres à Qwen, sans recopier le corpus.
+1. Configurer un serveur MCP **Live Memory externe**, avec un espace du projet
+   réellement accessible en lecture et en écriture.
+2. Adapter toutes les occurrences des marqueurs de
+   [`PROJECT_RULES.md`](boilerplate/AGENTIC_RULES/PROJECT_RULES.md).
+   La copie du template ne crée ni serveur ni espace mémoire.
+3. Suivre le [guide de configuration et de vérification du projet
+   généré](boilerplate/README.md#configurer-la-mémoire-externe-obligatoire).
+   Conserver les secrets dans la configuration MCP ou le coffre, jamais dans les règles.
+4. Vérifier les fichiers d'entrée et ouvrir une nouvelle session dans le projet.
+   L'agent doit charger la mémoire avant toute tâche courante. Si ce démarrage
+   échoue, seuls le diagnostic et le rétablissement prévus dans les règles sont permis.
 
-Ensuite :
+### 11.4 Un même corpus pour les outils
 
-1. conserver les trois bootstraps à la racine du projet ;
-2. remplacer les placeholders de `DESIGN/AGENTIC_RULES/` par les valeurs du
-   projet, notamment `SPACE`, `LIVE_MCP_SERVER`, `GRAPH_MCP_SERVER` et
-   `GRAPH_MEMORY_ID` ;
-3. supprimer les workflows qui ne s'appliquent pas réellement au projet plutôt
-   que de conserver des obligations fictives ;
-4. ne jamais stocker de token, endpoint sensible ou secret dans ces fichiers ;
-5. committer les règles et les bootstraps partagés afin qu'ils soient relus et
-   versionnés avec le code.
+Les fichiers d'entrée sont déjà fournis :
 
-### 11.5 Contenu du corpus fourni
+- [`AGENTS.md`](boilerplate/AGENTS.md) indique le point de départ et le
+  prérequis mémoire.
+- [`CLAUDE.md`](boilerplate/CLAUDE.md) conserve l'import `@AGENTS.md`.
+- [`QWEN.md`](boilerplate/QWEN.md) renvoie au bootstrap commun et réserve les
+  compléments aux consignes spécifiques de l'outil.
 
-| Fichier | Rôle |
-| ------- | ---- |
-| `boilerplate/DESIGN/AGENTIC_RULES/MAIN_RULES.md` | Point d'entrée des règles projet générées |
-| `boilerplate/DESIGN/AGENTIC_RULES/WORKSPACE_ADVANCE_RULES.md` | Bootstrap mémoire avec Live Memory, recherche Graph Memory, hygiène de consolidation |
-| `boilerplate/DESIGN/AGENTIC_RULES/WORKFLOW_ENGINEERING.md` | Cycle engineering : plan, implémentation, review adversariale, tests non complaisants |
-| `boilerplate/DESIGN/AGENTIC_RULES/WORKFLOW_GIT.md` | Branches, issues, PR, liens `Closes #N`, séparation issue/PR |
-| `boilerplate/DESIGN/AGENTIC_RULES/WORKFLOW_GIT_EPIC.md` | Pilotage EPIC, RC flow, statuts Project, gates humains |
+Ne pas recopier les règles détaillées dans ces trois fichiers. Après modification,
+demander à l'agent de citer les fichiers lus, l'espace mémoire réellement utilisé
+et le résultat de son démarrage, sans afficher de secret. Ne pas se contenter de
+sa promesse de lire les règles.
 
-Le modèle mémoire sépare explicitement trois niveaux :
+Pour les mécanismes de chargement propres aux outils, consulter les guides
+officiels : [Codex — AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md),
+[Claude Code — mémoire](https://code.claude.com/docs/en/memory) et
+[Qwen Code — mémoire](https://qwenlm.github.io/qwen-code-docs/en/users/features/memory/).
 
-- **Live Memory** : contexte court de session et notes consolidables.
-- **Graph Memory** : index sémantique durable pour retrouver les documents canoniques.
-- **Fichiers du repo** : vérité finale pour les décisions, runbooks, RFC et code.
+### 11.5 Ce qui change avec ce corpus
 
-Références Cloud Temple :
+Le socle reprend les workflows simplifiés du template DBaaS : contrôles adaptés
+au risque réel, revue indépendante du plan et du résultat pour les changements
+sensibles, pas de seconde revue d'un contenu inchangé, PR simple par défaut.
+Le Project et le train RC ne sont utilisés que si le projet en a besoin.
+Aucun modèle de relecture particulier n'est imposé par le template.
 
-- [Cloud-Temple/live-memory](https://github.com/Cloud-Temple/live-memory)
-- [Cloud-Temple/graph-memory](https://github.com/Cloud-Temple/graph-memory)
+La politique de validation change explicitement :
 
-### 11.6 Vérifier et maintenir le dispositif
+| Opération dans le mandat | Ancien corpus | Nouveau corpus |
+| --- | --- | --- |
+| Push, issues, PR, commentaires et Project | GO humain par action externe | Pas de GO supplémentaire |
+| Consolidation mémoire | Validation humaine dédiée | Selon le protocole mémoire, sans GO supplémentaire |
+| Release, déploiement et exploitation | GO humain par action | Sans GO supplémentaire seulement si inclus dans la demande ou le workflow de livraison établi |
+| Merge d'une PR, y compris vers RC | GO humain requis | GO humain requis pour la PR, la cible et le contenu examinés |
 
-Après création ou modification des bootstraps, démarrer une **nouvelle
-session** dans la racine du dépôt : la découverte des instructions se fait au
-démarrage et une session déjà ouverte peut conserver une ancienne version.
+Cela n'autorise aucune action hors mandat et ne modifie aucune permission
+technique. L'absence de mémoire externe opérationnelle reste bloquante.
 
-- Avec Codex, demander `Résume les instructions actives et leurs fichiers sources`.
-- Avec Claude Code, utiliser `/context` et vérifier que `CLAUDE.md` apparaît
-  dans les fichiers mémoire, puis demander un résumé des règles importées
-  depuis `AGENTS.md`.
-- Avec Qwen Code, demander explicitement la liste des instructions projet
-  chargées ; `/memory` permet en complément de contrôler les éventuels
-  `QWEN.md`.
-
-Lorsqu'une règle change, modifier son fichier canonique dans
-`DESIGN/AGENTIC_RULES/`, vérifier qu'elle ne contredit pas une règle de portée
-plus proche, puis faire relire le diff comme toute autre modification du dépôt.
+Pour un projet utilisant l'ancien corpus, suivre la
+[migration des règles existantes](boilerplate/README.md#migrer-les-anciennes-règles).
+Les consignes spécifiques doivent être conservées et revues, pas écrasées
+par une copie automatique.
 
 ---
 

@@ -5,6 +5,30 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ---
 
+## [2.0.4] — 2026-09-11
+
+### Changed
+
+- Replaced the old rules under `DESIGN/AGENTIC_RULES/` with a single root-level
+  `AGENTIC_RULES/` corpus; `PROJECT_RULES.md` replaces the advanced memory file.
+- Required operational external Live Memory before ordinary agent work and
+  after any memory outage. Missing reads or required writes block work; no
+  local-memory fallback is allowed. Recovery is limited to memory access.
+- Load workflow rules by task and scale independent reviews to concrete risks;
+  no fixed reviewer model, duplicate unchanged-content reviews or mandatory RC
+  train for every project.
+- Keep human GO at PR merge, including RC targets; other steps need no extra GO
+  only within the existing mandate. Release/deployment authority must not be
+  inferred from a local-change request. Technical permissions remain unchanged.
+
+### Documentation
+
+- Aligned the agent entry files, README and DESIGN with the new location and
+  mandatory memory setup, including a migration guide for existing projects.
+- Aligned `VERSION` and the health-response example with `2.0.4`.
+
+The MCP runtime and dependency pins are unchanged.
+
 ## [2.0.3] — 2026-09-08
 
 ### Security
