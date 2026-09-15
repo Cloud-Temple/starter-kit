@@ -199,7 +199,13 @@ def _serialise(method):
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         with self._lock:
-            return method(self, *args, **kwargs)
+            try:
+                return method(self, *args, **kwargs)
+            finally:
+                # Incrémenté même en cas d'échec : une écriture ratée est
+                # ambiguë, elle a pu aboutir côté magasin. Une lecture en vol
+                # ne doit pas davantage écraser cet état-là.
+                self._mutation_seq += 1
     return wrapper
 
 
@@ -274,6 +280,10 @@ class S3TokenStore:
         # lecture concurrente remplace `_tokens` entre le rechargement et
         # l'écriture. Ne dit rien des autres instances.
         self._lock = threading.RLock()
+        # Compte les mutations locales abouties. `load()` en prend copie avant
+        # son GET : si le compte a bougé quand la réponse arrive, ce corps est
+        # antérieur à la mutation et l'appliquer l'effacerait.
+        self._mutation_seq: int = 0
 
     @property
     def CACHE_TTL(self) -> int:
@@ -342,12 +352,21 @@ class S3TokenStore:
         """
         try:
             s3 = self._get_s3()
+            seq = self._mutation_seq
             resp = s3.get_object(Bucket=self.settings.s3_bucket_name, Key=self.S3_KEY)
             data = json.loads(resp["Body"].read().decode())
             with self._lock:
-                self._tokens = {t["hash"]: t for t in data.get("tokens", [])}
-                self._cache_time = time.time()
-                self._needs_reload = False
+                if self._mutation_seq != seq:
+                    # Une mutation locale a abouti pendant ce GET. Le corps que
+                    # nous tenons lui est antérieur : l'appliquer rendrait au
+                    # cache un token qu'on vient de révoquer, et lui donnerait
+                    # en prime un TTL tout neuf. Le verrou des mutations ne
+                    # protège pas de ça, la lecture se fait hors verrou.
+                    self._needs_reload = True
+                else:
+                    self._tokens = {t["hash"]: t for t in data.get("tokens", [])}
+                    self._cache_time = time.time()
+                    self._needs_reload = False
             self._clear_failure()
         except Exception as e:
             if _is_missing_object(e):
@@ -404,6 +423,16 @@ class S3TokenStore:
     def _guard_stale(self, age: float) -> None:
         if self.fail_mode == "fail_open":
             return
+        if self.CACHE_TTL == 0:
+            # Un TTL nul est un refus explicite de servir depuis le cache.
+            # Laisser la grâce rouvrir une fenêtre de cinq minutes rendrait à
+            # l'exploitant exactement ce qu'il vient de refuser, par une autre
+            # porte que le repli `int(...) or 300` déjà corrigé.
+            raise TokenStoreUnavailable(
+                "magasin de tokens injoignable et TOKEN_STORE_CACHE_TTL=0 "
+                "interdit de servir depuis le cache : accès refusé "
+                f"({self._last_error or 'cause inconnue'})"
+            )
         if age <= self.CACHE_TTL + self.stale_grace:
             return
         raise TokenStoreUnavailable(
@@ -576,6 +605,8 @@ class VaultTokenStore:
         self._last_error = None
         self._needs_reload: bool = False
         self._lock = threading.RLock()
+        # Même rôle que côté S3 : `_serialise` l'incrémente à chaque mutation.
+        self._mutation_seq: int = 0
         self._vault_token = get_vault_application_token(settings)
 
     @property

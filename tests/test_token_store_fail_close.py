@@ -11,23 +11,33 @@ Une écriture qui échoue est ambiguë : le magasin a pu l'appliquer et perdre s
 réponse en route. La règle retenue est de garder localement l'état le plus
 restrictif, et de marquer le cache à revalider.
 
-Preuves par mutation, mesurées sur ces 30 tests et reproductibles. Chaque
-défaut est réintroduit par une modification précise, et la suite tombe ainsi :
+Preuves par mutation, mesurées sur ces 41 tests. Chaque défaut est réintroduit
+par une modification précise, et la suite tombe ainsi :
 
-    mutation appliquée au code corrigé                      rouges
-    -----------------------------------------------------   ------
-    `load()` ravale sa levée, l'avalement d'origine           7/30
-    `_persist_or_restore` n'annule rien et ne marque rien     7/30
-    `_save()` ravale sa levée                                 6/30
-    `handle_admin_api` n'attrape plus TokenStoreUnavailable   4/30
-    `_guard_stale` ne lève jamais                             3/30
-    une révocation ratée est annulée en mémoire               3/30
-    une écriture douteuse ne marque plus le cache             3/30
-    `CACHE_TTL` replie un `0` configuré sur 300               2/30
-    l'API admin rend de nouveau `str(e)` dans le corps        2/30
-    `_maybe_refresh` ignore le drapeau de revalidation        1/30
-    les mutations ne sont plus sérialisées                    1/30
-    `_is_missing_object` accepte de nouveau un statut 404 nu  1/30
+    mutation appliquée au code corrigé                          rouges
+    ---------------------------------------------------------   ------
+    `_persist_or_restore` n'annule rien et ne marque rien         7/41
+    `load()` ravale sa levée, l'avalement d'origine               6/41
+    `_save()` ravale sa levée                                     6/41
+    le middleware n'attrape plus TokenStoreUnavailable            6/41
+    `handle_admin_api` n'attrape plus TokenStoreUnavailable       4/41
+    le refus du middleware laisse tourner l'application en aval   3/41
+    `_guard_stale` ne lève jamais                                 3/41
+    une écriture douteuse ne marque plus le cache                 3/41
+    une révocation ratée est annulée en mémoire                   3/41
+    `CACHE_TTL` replie un `0` configuré sur 300                   2/41
+    l'API admin rend de nouveau `str(e)` dans le corps            2/41
+    `_is_missing_object` accepte de nouveau un statut 404 nu      2/41
+    un `TTL=0` laisse la grâce rouvrir la fenêtre                 1/41
+    `load()` ignore le compteur de génération                     1/41
+    `_serialise` n'incrémente plus le compteur                    1/41
+    le 503 du middleware republie le message du magasin           1/41
+    le refus du middleware redevient un 401                       1/41
+    le 503 du middleware ne dit plus quand réessayer              1/41
+    un websocket invérifiable est accepté                         1/41
+    les routes publiques ne court-circuitent plus l'auth          1/41
+    `_maybe_refresh` ignore le drapeau de revalidation            1/41
+    les mutations ne sont plus sérialisées                        1/41
 
 Aucun de ces chiffres n'est une estimation, et aucune mutation ne passe
 inaperçue. Reproduire : appliquer une mutation au fichier source, relancer
@@ -35,9 +45,12 @@ inaperçue. Reproduire : appliquer une mutation au fichier source, relancer
 
 Limite connue et non couverte ici : sans écriture conditionnelle côté magasin,
 deux instances peuvent encore s'écraser mutuellement. Le verrou vérifié plus
-bas ne sérialise que ce process.
+bas ne sérialise que ce process, et seulement ses mutations entre elles. Une
+lecture concurrente n'est pas sérialisée avec une mutation ; c'est le compteur
+de génération, pas le verrou, qui l'empêche d'effacer une révocation.
 """
 
+import asyncio
 import io
 import json
 import os
@@ -193,14 +206,35 @@ def test_un_ttl_a_zero_est_respecte_et_non_replie_sur_le_defaut():
 
 
 def test_un_ttl_a_zero_refuse_l_acces_des_que_le_magasin_tombe():
+    """La grâce par défaut est laissée en place, et c'est tout l'intérêt.
+
+    La version précédente de ce test fixait aussi `token_store_stale_grace=0`.
+    Elle testait donc une configuration que personne n'écrit, et masquait le
+    défaut : avec la grâce par défaut, un `TTL=0` servait encore le cache
+    pendant cinq minutes, c'est-à-dire exactement la fenêtre de révocation que
+    l'exploitant refusait en mettant zéro.
+    """
     token = a_token()
     store, _ = make_store(get_error=RuntimeError("S3 Connection timeout"),
-                          token_store_cache_ttl=0, token_store_stale_grace=0)
+                          token_store_cache_ttl=0)
+    assert store.stale_grace == 300, "la grâce par défaut doit rester en place"
     store._tokens = {token["hash"]: token}
     store._cache_time = time.time() - 1
 
     with pytest.raises(TokenStoreUnavailable):
         store.get_by_hash(token["hash"])
+
+
+def test_une_grace_par_defaut_protege_toujours_un_ttl_normal():
+    """Contrepartie du test ci-dessus : court-circuiter la grâce ne doit valoir
+    que pour un TTL nul. Avec un TTL normal, une panne brève reste absorbée."""
+    token = a_token()
+    store, _ = make_store(get_error=RuntimeError("S3 Connection timeout"),
+                          token_store_cache_ttl=60)
+    store._tokens = {token["hash"]: token}
+    store._cache_time = time.time() - 90  # périmé, mais dans les 60 + 300
+
+    assert store.get_by_hash(token["hash"]) is not None
 
 
 def test_un_ttl_illisible_retombe_sur_le_defaut():
@@ -663,3 +697,265 @@ async def test_une_ecriture_non_authentifiee_pendant_une_panne_repond_502_sans_d
 
     assert status == 502
     assert "bucket-prive-42" not in json.dumps(data)
+
+
+# =============================================================================
+# Le 503 du middleware d'authentification
+#
+# Ce bloc comblait un trou : la suite affirmait couvrir le refus en 503 alors
+# qu'aucun test ne construisait `AuthMiddleware`. Retirer tout le
+# `except TokenStoreUnavailable` du middleware laissait les 128 tests du dépôt
+# verts, y compris ceux de ce fichier.
+# =============================================================================
+
+from mon_service.auth.middleware import AuthMiddleware  # noqa: E402
+from mon_service.auth.context import current_token_info  # noqa: E402
+
+
+class _AppTemoin:
+    """Application en aval. Doit rester intouchée quand l'accès est refusé."""
+
+    def __init__(self):
+        self.appels = 0
+        self.token_info_vu = "jamais appelée"
+
+    async def __call__(self, scope, receive, send):
+        self.appels += 1
+        self.token_info_vu = current_token_info.get()
+        corps = b'{"ok": true}'
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-type", b"application/json")]})
+        await send({"type": "http.response.body", "body": corps})
+
+
+async def _appeler_middleware(middleware, path="/mcp", bearer=None, type_scope="http"):
+    envoyes = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        envoyes.append(message)
+
+    headers = [(b"authorization", b"Bearer " + bearer.encode())] if bearer else []
+    scope = {"type": type_scope, "method": "POST", "path": path, "headers": headers}
+    await middleware(scope, receive, send)
+
+    debut = next((m for m in envoyes if m["type"] == "http.response.start"), None)
+    brut = b"".join(m.get("body", b"") for m in envoyes if m["type"] == "http.response.body")
+    return debut, brut, envoyes
+
+
+def _middleware_dont_le_magasin_est_injoignable(monkeypatch, message=None):
+    """AuthMiddleware dont la validation lève, comme lors d'une panne réelle."""
+    app = _AppTemoin()
+    middleware = AuthMiddleware(app)
+    detail = message or (
+        "chargement du magasin de tokens impossible : EndpointConnectionError "
+        "Could not connect to https://s3-interne.example/bucket-prive-42"
+    )
+
+    def _tombe(self, token):
+        raise TokenStoreUnavailable(detail)
+
+    monkeypatch.setattr(AuthMiddleware, "_validate_token", _tombe)
+    return middleware, app
+
+
+def test_un_acces_invérifiable_repond_503_et_non_401():
+    """Un 401 dirait « ton token est invalide », et le client le remplacerait.
+
+    C'est la promesse centrale du correctif. Sans ce test, supprimer le
+    `except TokenStoreUnavailable` du middleware ne faisait rien tomber.
+    """
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        middleware, app = _middleware_dont_le_magasin_est_injoignable(monkeypatch)
+        debut, _, _ = asyncio.run(_appeler_middleware(middleware, bearer="un-token-quelconque"))
+    finally:
+        monkeypatch.undo()
+
+    assert debut is not None, "le middleware n'a rien répondu"
+    assert debut["status"] == 503
+    assert debut["status"] != 401
+
+
+def test_un_acces_invérifiable_n_atteint_jamais_l_application():
+    """Refuser, c'est ne pas exécuter la requête. Un 503 rendu après coup ne
+    protégerait rien si l'outil en aval a déjà tourné."""
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        middleware, app = _middleware_dont_le_magasin_est_injoignable(monkeypatch)
+        asyncio.run(_appeler_middleware(middleware, bearer="un-token-quelconque"))
+    finally:
+        monkeypatch.undo()
+
+    assert app.appels == 0
+    assert app.token_info_vu == "jamais appelée"
+
+
+def test_le_503_du_middleware_ne_publie_pas_le_detail_du_magasin():
+    """Le message cite l'endpoint S3 et le bucket. Il reste sur stderr."""
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        middleware, _ = _middleware_dont_le_magasin_est_injoignable(monkeypatch)
+        _, brut, _ = asyncio.run(_appeler_middleware(middleware, bearer="un-token-quelconque"))
+    finally:
+        monkeypatch.undo()
+
+    rendu = brut.decode()
+    assert "s3-interne.example" not in rendu
+    assert "bucket-prive-42" not in rendu
+    assert "EndpointConnectionError" not in rendu
+    assert json.loads(rendu)["error"] == "token_store_unavailable"
+
+
+def test_le_503_du_middleware_dit_au_client_de_reessayer():
+    """Sans `Retry-After`, un client bien élevé n'a aucune borne à respecter."""
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        middleware, _ = _middleware_dont_le_magasin_est_injoignable(monkeypatch)
+        debut, _, _ = asyncio.run(_appeler_middleware(middleware, bearer="un-token-quelconque"))
+    finally:
+        monkeypatch.undo()
+
+    entetes = {k.lower(): v for k, v in debut["headers"]}
+    assert entetes.get(b"retry-after") == b"30"
+
+
+def test_un_websocket_invérifiable_est_ferme_et_non_accepte():
+    """Un websocket n'a pas de code HTTP. 1013 « try again later » est l'équivalent."""
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        middleware, app = _middleware_dont_le_magasin_est_injoignable(monkeypatch)
+        _, _, envoyes = asyncio.run(
+            _appeler_middleware(middleware, bearer="un-token", type_scope="websocket"))
+    finally:
+        monkeypatch.undo()
+
+    assert envoyes == [{"type": "websocket.close", "code": 1013}]
+    assert app.appels == 0
+
+
+def test_le_health_check_reste_vert_pendant_une_panne_du_magasin():
+    """Sinon l'orchestrateur redémarre des instances qui se portent bien.
+
+    Une panne S3 est déjà un incident. Y ajouter un cycle de redémarrages
+    généralisé le transformerait en panne totale du service.
+    """
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        middleware, app = _middleware_dont_le_magasin_est_injoignable(monkeypatch)
+        debut, _, _ = asyncio.run(
+            _appeler_middleware(middleware, path="/health", bearer="un-token"))
+    finally:
+        monkeypatch.undo()
+
+    assert debut["status"] == 200
+    assert app.appels == 1
+
+
+def test_une_requete_sans_token_traverse_toujours_pendant_une_panne():
+    """Le magasin n'est pas interrogé sans Bearer : rien à refuser ici.
+
+    Répondre 503 à du trafic anonyme ferait tomber les routes publiques par
+    ricochet, et gonflerait la panne au-delà de ce qu'elle touche vraiment.
+    """
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        middleware, app = _middleware_dont_le_magasin_est_injoignable(monkeypatch)
+        debut, _, _ = asyncio.run(_appeler_middleware(middleware, bearer=None))
+    finally:
+        monkeypatch.undo()
+
+    assert debut["status"] == 200
+    assert app.appels == 1
+    assert app.token_info_vu is None
+
+
+def test_un_token_valide_passe_toujours_quand_le_magasin_repond():
+    """Garde-fou de non-régression : le refus ne doit pas mordre sur le cas sain."""
+    app = _AppTemoin()
+    middleware = AuthMiddleware(app)
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(AuthMiddleware, "_validate_token",
+                            lambda self, token: {"client_name": "agent", "permissions": ["read"]})
+        debut, _, _ = asyncio.run(_appeler_middleware(middleware, bearer="un-token-valide"))
+    finally:
+        monkeypatch.undo()
+
+    assert debut["status"] == 200
+    assert app.appels == 1
+    assert app.token_info_vu["client_name"] == "agent"
+
+
+def test_le_contextvar_ne_fuit_pas_apres_un_refus():
+    """Un refus sort avant de poser le contextvar. S'il fuyait, la requête
+    suivante du même worker hériterait d'un état d'authentification."""
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        middleware, _ = _middleware_dont_le_magasin_est_injoignable(monkeypatch)
+        asyncio.run(_appeler_middleware(middleware, bearer="un-token"))
+    finally:
+        monkeypatch.undo()
+
+    assert current_token_info.get() is None
+
+
+def test_une_lecture_en_vol_n_efface_pas_une_revocation_aboutie():
+    """Le verrou des mutations ne protège pas d'une lecture concurrente.
+
+    `load()` fait son GET hors verrou et ne le prend qu'au moment d'écraser
+    `_tokens`. Une lecture partie avant une révocation peut donc revenir après
+    elle, réinjecter la version non révoquée et lui offrir un TTL tout neuf :
+    le token révoqué redevient valide sur cette instance pendant cinq minutes.
+
+    La phrase « le verrou ne sérialise que ce process » laissait croire
+    l'inverse, qu'à l'intérieur d'un process tout était sérialisé.
+
+    L'entrelacement est ici imposé, pas espéré : le GET du lecteur est bloqué
+    jusqu'à ce que la révocation soit écrite.
+    """
+    import threading
+
+    token = a_token()
+    gete_commence = threading.Event()
+    liberer_le_lecteur = threading.Event()
+
+    class S3QuiRetientLaPremiereLecture:
+        def __init__(self):
+            self.etat_serveur = {"tokens": [dict(token)]}
+            self.gets = 0
+
+        def get_object(self, **kwargs):
+            self.gets += 1
+            corps = json.dumps(self.etat_serveur).encode()
+            if self.gets == 1:
+                # Le lecteur tient déjà l'état d'avant révocation.
+                gete_commence.set()
+                liberer_le_lecteur.wait(timeout=5)
+            return {"Body": io.BytesIO(corps)}
+
+        def put_object(self, **kwargs):
+            self.etat_serveur = json.loads(kwargs["Body"].decode())
+
+    store = S3TokenStore(DummySettings())
+    faux = S3QuiRetientLaPremiereLecture()
+    store._s3_client = faux
+
+    lecteur = threading.Thread(target=store.load)
+    lecteur.start()
+    assert gete_commence.wait(timeout=5), "le GET du lecteur n'a jamais démarré"
+
+    assert store.revoke(token["hash"][:16]) is True
+    liberer_le_lecteur.set()
+    lecteur.join(timeout=5)
+    assert not lecteur.is_alive(), "le lecteur est resté bloqué"
+
+    assert store._tokens[token["hash"]]["revoked"] is True, (
+        "la lecture en vol a réinjecté la version non révoquée"
+    )
+    # Le corps jeté n'est pas une vérité de remplacement : la prochaine lecture
+    # doit aller la chercher au lieu de faire confiance à ce cache.
+    assert store._needs_reload is True

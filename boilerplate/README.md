@@ -456,6 +456,14 @@ Le backend Vault refuse l'accès dès la première panne, sans fenêtre de cache
 périmé ni backoff : il ne lit pas `TOKEN_STORE_FAIL_MODE` ni
 `TOKEN_STORE_STALE_GRACE`. Il refuse donc davantage que S3, jamais moins.
 
+Il refuse en revanche de la mauvaise manière passé la première requête. Sur
+une erreur de chargement, il vide son cache et rafraîchit son horodatage avant
+de lever : la requête qui subit la panne reçoit bien un 503, mais les suivantes
+voient un cache jugé frais et vide, donc un token inconnu, donc un 401 pendant
+tout le TTL. Un client bien élevé en conclura que son token est invalide et le
+remplacera. Le comportement est plus restrictif que S3, jamais plus permissif,
+mais le code d'erreur ment. Corrigé séparément.
+
 Dans les deux cas, une panne du magasin n'empêche pas le service de démarrer :
 `/health`, la console d'administration et la clé bootstrap restent disponibles
 pour diagnostiquer, et seule l'authentification par token répond 503.

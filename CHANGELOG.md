@@ -1,5 +1,54 @@
 # Changelog
 
+## v2.0.7 — 2026-09-15 — What the counter-review found in v2.0.6
+
+An adversarial review of the v2.0.6 backports turned up three defects. The first
+is the one that stings: the suite claimed to cover a behaviour it never touched.
+
+### Fixed
+
+- **The middleware's `503` was never tested.** Removing the whole
+  `except TokenStoreUnavailable` from `AuthMiddleware` left all 128 tests green,
+  in every repository of the fleet. The CHANGELOG entries and pull request
+  descriptions for v2.0.5 and v2.0.6 claimed otherwise. Nine tests now cover the
+  refusal: `503` and not `401`, the downstream app never runs, the store's
+  message stays out of the body, `Retry-After` is set, a websocket is closed with
+  1013, the contextvar does not leak, a valid token still passes, anonymous
+  traffic still passes, and `/health` stays green during an outage so the
+  orchestrator does not restart instances that are fine.
+- **`TOKEN_STORE_CACHE_TTL=0` no longer serves the cache for five minutes.**
+  A null TTL forced a reload, but when that reload failed `_guard_stale` still
+  allowed the cache for `0 + TOKEN_STORE_STALE_GRACE`, which defaults to 300
+  seconds. It handed back the revocation window the operator had just refused,
+  through a second door, after v2.0.6 had closed the first. A null TTL now
+  short-circuits the grace window. The test that should have caught this set
+  `token_store_stale_grace=0` as well, so it exercised a configuration nobody
+  writes.
+- **A read in flight could erase a revocation that had already been written.**
+  `load()` performs its `GET` outside the lock and only takes it to overwrite
+  `_tokens`. A read that started before a revocation could return after it,
+  reinject the unrevoked version and give it a fresh TTL, so the revoked token
+  stayed valid on that instance for the length of the cache. `load()` now takes a
+  copy of a mutation counter before its `GET` and discards a body that has become
+  stale, marking the cache for revalidation.
+
+### Changed
+
+- The documented limit was wrong. "The lock only serialises this process"
+  suggested everything inside one process was safe. It serialises mutations
+  against each other, nothing more. The docstring now says so, and names the
+  generation counter as what protects reads.
+
+### Known limitations, unchanged
+
+- No conditional write on the store side, so two instances can still overwrite
+  each other. See issue #28.
+- The Vault backend wipes `_tokens` and refreshes `_cache_time` on every load
+  error before raising. The first request gets its `503`, every later one within
+  the TTL gets a `401` instead. This predates the fail-close work, and it fails
+  closed rather than open, so it is tracked separately rather than rushed here.
+
+
 ## v2.0.6 — 2026-09-15 — Two defects found while backporting v2.0.5
 
 Both were found by porting the v2.0.5 fix to `mcp-office` and `mcp-agent`, and
