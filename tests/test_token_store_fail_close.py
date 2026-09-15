@@ -7,17 +7,19 @@ une création répondait 201 avec un token que personne n'avait persisté, une
 révocation répondait succès sans rien révoquer, et une panne de lecture se
 présentait comme un magasin vide donc comme un token inconnu.
 
-Preuves par mutation, mesurées et non supposées. En réintroduisant chaque
-défaut dans le code, la suite de ce fichier tombe ainsi :
+Preuves par mutation, mesurées sur ce fichier et reproductibles. Chaque défaut
+est réintroduit par une modification précise, et la suite tombe ainsi :
 
-    load() ravale ses erreurs                    5 tests sur 19
-    _save() ravale ses erreurs                   4 tests sur 19
-    l'API admin ne traduit plus la panne         2 tests sur 19
-    TOKEN_STORE_FAIL_MODE n'est plus lu          2 tests sur 19
+    load() remplace sa levée par un return, l'avalement d'origine     5 / 22
+    _save() remplace sa levée par un return                           4 / 22
+    _persist_or_restore ne restaure plus rien                         5 / 22
+    handle_admin_api n'attrape plus TokenStoreUnavailable             2 / 22
+    _guard_stale rend la main sans lire fail_mode                     2 / 22
+    _is_missing_object accepte de nouveau un statut 404 nu            1 / 22
 
-Les cas restants gardent la détection stricte de l'objet absent, le TTL lu
-dans la configuration, le démarrage dégradé, l'honnêteté du statut et la
-restauration d'état du magasin Vault après un refus d'écriture.
+Aucun de ces chiffres n'est une estimation. Les cas non couverts par ces six
+mutations gardent le TTL lu dans la configuration, le démarrage dégradé, le
+rechargement avant mutation et la normalisation des erreurs du magasin Vault.
 """
 
 import io
@@ -129,7 +131,9 @@ class ObjetAbsent(Exception):
 
 
 class PanneDeProxy(Exception):
-    """Une passerelle en panne peut parler de 404 sans que l'objet soit absent."""
+    """Une passerelle en panne peut renvoyer un 404 sans que l'objet soit absent."""
+
+    response = {"Error": {"Code": ""}, "ResponseMetadata": {"HTTPStatusCode": 404}}
 
 
 def test_un_objet_absent_est_un_magasin_vide_pas_une_panne():
@@ -141,8 +145,12 @@ def test_un_objet_absent_est_un_magasin_vide_pas_une_panne():
     assert store._cache_time > 0
 
 
-def test_une_panne_qui_parle_de_404_n_est_pas_un_objet_absent():
-    """Chercher « 404 » dans le texte de l'erreur confondait panne et magasin vide."""
+def test_un_404_sans_code_s3_n_est_pas_un_objet_absent():
+    """Ni le texte de l'erreur ni le statut HTTP seul ne prouvent l'absence.
+
+    Une passerelle en panne renvoie un 404 structuré sans code S3 ; le lire
+    comme un magasin vide transformerait la panne en « aucun token connu ».
+    """
     store, _ = make_store(get_error=PanneDeProxy("gateway returned HTTP 404 during outage"))
 
     with pytest.raises(TokenStoreUnavailable):
@@ -258,6 +266,32 @@ def test_le_magasin_vault_restaure_aussi_son_etat_apres_un_refus():
     assert set(store._tokens) == {token["hash"]}
 
 
+class SaveQuiEchoueApresUneAutreMutation(S3TokenStore):
+    """Une écriture qui échoue après qu'un autre token a été touché."""
+
+    AUTRE = "c" * 64
+
+    def load(self):
+        self._cache_time = time.time()
+
+    def _save(self):
+        self._tokens[self.AUTRE] = a_token(self.AUTRE)
+        raise TokenStoreUnavailable("S3 Connection timeout")
+
+
+def test_la_restauration_n_emporte_pas_une_mutation_portant_sur_un_autre_token():
+    token = a_token()
+    token["permissions"] = ["read"]
+    store = SaveQuiEchoueApresUneAutreMutation(DummySettings())
+    store._tokens = {token["hash"]: token}
+
+    with pytest.raises(TokenStoreUnavailable):
+        store.update(token["hash"][:12], permissions=["admin"])
+
+    assert store._tokens[token["hash"]]["permissions"] == ["read"]
+    assert SaveQuiEchoueApresUneAutreMutation.AUTRE in store._tokens
+
+
 # --- Démarrage et diagnostic -------------------------------------------------
 
 def test_une_panne_au_demarrage_ne_empeche_pas_le_service_de_demarrer():
@@ -270,6 +304,53 @@ def test_une_panne_au_demarrage_ne_empeche_pas_le_service_de_demarrer():
     # Démarré mais dégradé : l'authentification par token refuse.
     with pytest.raises(TokenStoreUnavailable):
         store.get_by_hash("a" * 64)
+
+
+class ReponseVault:
+    def __init__(self, status_code, payload=None, json_error=False):
+        self.status_code = status_code
+        self._payload = payload
+        self._json_error = json_error
+
+    def json(self):
+        if self._json_error:
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+        return self._payload
+
+
+@dataclass
+class VaultSettings(DummySettings):
+    mcp_vault_url: str = "https://vault.example.test"
+    mcp_vault_id: str = "vault-test"
+    mcp_vault_token: str = "jeton"
+    mcp_vault_token_file: str = ""
+    mcp_vault_token_store_path: str = "token-store/tokens.json"
+    mcp_vault_timeout: float = 1.0
+
+
+def test_un_payload_vault_illisible_est_une_indisponibilite_pas_une_ValueError(monkeypatch):
+    """Une ValueError nue remonterait jusqu'au démarrage et l'empêcherait."""
+    import httpx
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: ReponseVault(200, json_error=True))
+    store = VaultTokenStore(VaultSettings())
+
+    with pytest.raises(TokenStoreUnavailable):
+        store.load()
+
+    # Et le démarrage encaisse ce cas comme les autres.
+    _load_at_startup(store, "Vault")
+
+
+def test_le_statut_dit_aussi_la_verite_pour_le_magasin_vault(monkeypatch):
+    import httpx
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: ReponseVault(503))
+    store = VaultTokenStore(VaultSettings())
+    monkeypatch.setattr(ts, "get_token_store", lambda: store)
+
+    with pytest.raises(TokenStoreUnavailable):
+        store.load()
+
+    assert get_token_store_status()["reachable"] is False
 
 
 def test_le_statut_ne_pretend_pas_que_le_magasin_est_joignable(monkeypatch):

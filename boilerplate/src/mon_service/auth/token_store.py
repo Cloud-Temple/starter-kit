@@ -162,23 +162,25 @@ def _is_missing_object(error: Exception) -> bool:
         meta = response.get("ResponseMetadata", {})
         if isinstance(meta, dict):
             status = meta.get("HTTPStatusCode")
-    if code == "NoSuchKey" or type(error).__name__ == "NoSuchKey":
-        return True
-    # Certains fournisseurs S3 compatibles ne renseignent pas le code.
-    return status == 404 and code in ("", "NoSuchKey", "NotFound")
+    del status  # le seul signal fiable est le code d'erreur, pas le statut HTTP
+    return code == "NoSuchKey" or type(error).__name__ == "NoSuchKey"
 
 
-def _persist_or_restore(store, previous: dict) -> None:
-    """Écrit l'état courant, ou remet l'état précédent si l'écriture échoue.
+def _persist_or_restore(store, token_hash: str, previous_entry) -> None:
+    """Écrit l'état courant, ou remet la seule entrée touchée si l'écriture échoue.
 
     Sans cela, une mutation refusée par le magasin resterait appliquée en
     mémoire : cette instance accorderait des permissions que l'administrateur
-    a vues refusées en 502.
+    a vues refusées en 502. La restauration est limitée à l'entrée concernée,
+    pour ne pas emporter une mutation portant sur un autre token.
     """
     try:
         store._save()
     except TokenStoreUnavailable:
-        store._tokens = previous
+        if previous_entry is None:
+            store._tokens.pop(token_hash, None)
+        else:
+            store._tokens[token_hash] = previous_entry
         raise
 
 
@@ -398,11 +400,10 @@ class S3TokenStore:
         # Recharger avant de muter : écrire depuis un cache périmé écraserait
         # les tokens créés entre-temps par une autre instance.
         self.load()
-        previous = copy.deepcopy(self._tokens)
         self._tokens[token_hash] = token_info
         # Un token que le magasin n'a pas accepté ne doit pas survivre ici :
         # il serait valide sur cette instance et inconnu de toutes les autres.
-        _persist_or_restore(self, previous)
+        _persist_or_restore(self, token_hash, None)
 
         return {"raw_token": raw_token, **token_info}
 
@@ -429,14 +430,14 @@ class S3TokenStore:
         if len(hash_prefix) < 8:
             return False
         self.load()
-        previous = copy.deepcopy(self._tokens)
-        for h, t in self._tokens.items():
+        for h, t in list(self._tokens.items()):
             if h.startswith(hash_prefix):
+                previous_entry = copy.deepcopy(t)
                 t["revoked"] = True
                 t["revoked_at"] = __import__("datetime").datetime.now(
                     __import__("datetime").timezone.utc
                 ).isoformat()
-                _persist_or_restore(self, previous)
+                _persist_or_restore(self, h, previous_entry)
                 return True
         return False
 
@@ -452,9 +453,9 @@ class S3TokenStore:
             return {"status": "error", "message": "Hash prefix trop court (min 8 caractères)"}
 
         self.load()
-        previous = copy.deepcopy(self._tokens)
-        for h, t in self._tokens.items():
+        for h, t in list(self._tokens.items()):
             if h.startswith(hash_prefix):
+                previous_entry = copy.deepcopy(t)
                 updated_fields = []
                 if policy_id is not None:
                     t["policy_id"] = policy_id
@@ -471,7 +472,7 @@ class S3TokenStore:
 
                 # Invalider le cache pour forcer le rechargement
                 self._cache_time = 0
-                _persist_or_restore(self, previous)
+                _persist_or_restore(self, h, previous_entry)
 
                 return {
                     "status": "updated",
@@ -510,6 +511,7 @@ class VaultTokenStore:
         self.settings = settings
         self._tokens: dict = {}
         self._cache_time: float = 0
+        self._last_error = None
         self._vault_token = get_vault_application_token(settings)
 
     @property
@@ -525,6 +527,19 @@ class VaultTokenStore:
         return f"{base}/admin/api/vaults/{self.settings.mcp_vault_id}/secrets/{path}"
 
     def load(self):
+        """Charge les tokens depuis MCP Vault, en retenant la cause d'un échec.
+
+        Le statut d'administration doit pouvoir dire que le magasin n'est pas
+        joignable ; sans cette trace il annoncerait le contraire.
+        """
+        try:
+            self._load()
+        except TokenStoreUnavailable as exc:
+            self._last_error = str(exc)
+            raise
+        self._last_error = None
+
+    def _load(self):
         """Charge les tokens depuis MCP Vault.
 
         - 404 => store vide
@@ -568,7 +583,14 @@ class VaultTokenStore:
             self._cache_time = time.time()
             raise TokenStoreUnavailable(f"MCP Vault error while loading token store (HTTP {resp.status_code})")
 
-        payload = resp.json()
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            self._tokens = {}
+            self._cache_time = time.time()
+            raise TokenStoreUnavailable(
+                f"MCP Vault token store payload is not valid JSON: {exc}"
+            ) from exc
         data = payload.get("data", {}) if isinstance(payload, dict) else {}
         tokens = data.get("tokens", []) if isinstance(data, dict) else []
         if tokens is None:
@@ -618,6 +640,15 @@ class VaultTokenStore:
         ]
 
     def _save(self):
+        """Écrit dans MCP Vault, en retenant la cause d'un échec."""
+        try:
+            self.__save()
+        except TokenStoreUnavailable as exc:
+            self._last_error = str(exc)
+            raise
+        self._last_error = None
+
+    def __save(self):
         """Sauvegarde les tokens dans MCP Vault."""
         import httpx
 
@@ -675,9 +706,8 @@ class VaultTokenStore:
             "revoked": False,
         }
 
-        previous = copy.deepcopy(self._tokens)
         self._tokens[token_hash] = token_info
-        _persist_or_restore(self, previous)
+        _persist_or_restore(self, token_hash, None)
 
         return {"raw_token": raw_token, **token_info}
 
@@ -698,8 +728,8 @@ class VaultTokenStore:
         if not target_hash:
             return {"status": "error", "message": f"Token {hash_prefix[:12]}… non trouvé"}
 
-        previous = copy.deepcopy(self._tokens)
         token = self._tokens[target_hash]
+        previous_entry = copy.deepcopy(token)
         if token.get("revoked"):
             return {"status": "error", "message": f"Token {hash_prefix[:12]}… est révoqué"}
 
@@ -715,10 +745,9 @@ class VaultTokenStore:
             updated_fields.append("allowed_resources")
 
         if not updated_fields:
-            self._tokens = previous
             return {"status": "error", "message": "Aucun champ à modifier"}
 
-        _persist_or_restore(self, previous)
+        _persist_or_restore(self, target_hash, previous_entry)
 
         return {
             "status": "updated",
@@ -738,12 +767,12 @@ class VaultTokenStore:
         self.load()
 
         from datetime import datetime, timezone
-        previous = copy.deepcopy(self._tokens)
-        for h, t in self._tokens.items():
+        for h, t in list(self._tokens.items()):
             if h.startswith(hash_prefix):
+                previous_entry = copy.deepcopy(t)
                 t["revoked"] = True
                 t["revoked_at"] = datetime.now(timezone.utc).isoformat()
-                _persist_or_restore(self, previous)
+                _persist_or_restore(self, h, previous_entry)
                 return True
         return False
 

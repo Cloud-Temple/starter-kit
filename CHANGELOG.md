@@ -17,18 +17,21 @@
 - **A token whose write failed no longer survives in memory.** It would have been
   valid on that one instance and unknown to every other.
 
-- **An error message containing `404` is no longer read as an empty store.**
-  The check matched arbitrary text, so a failing proxy turned into "no token
-  exists". Detection now uses the S3 error code, not the message.
+- **Neither an error message containing `404` nor a bare HTTP 404 is read as an
+  empty store.** A failing proxy turned into "no token exists". Detection now
+  relies on the S3 error code alone.
 - **A refused mutation no longer stays applied in memory.** A permission
   elevation whose write failed left the instance granting rights the admin had
-  seen refused with a 502. Both backends restore their previous state.
+  seen refused with a 502. Both backends restore the touched entry, and only
+  that entry, so a mutation on another token is not swept away with it.
 - **An unreachable store at startup no longer prevents the service from
   starting.** Refusing to start would also cost `/health`, the admin console and
   the bootstrap key, which are the means to diagnose the outage. The service
   starts degraded and token authentication answers 503.
 - **`TOKEN_STORE_CACHE_TTL` is now honoured by the S3 store**, which used a
   hardcoded 300s while the status endpoint reported the configured value.
+- **A malformed Vault payload is an unavailability, not a bare `ValueError`.**
+  It used to escape the startup guard and stop the service.
 
 ### Changed
 
