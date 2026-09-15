@@ -23,7 +23,11 @@ import traceback
 from pathlib import Path
 
 from ..config import get_settings
-from ..auth.token_store import get_token_store, get_token_store_status
+from ..auth.token_store import (
+    get_token_store,
+    get_token_store_status,
+    TokenStoreUnavailable,
+)
 from ..auth.middleware import get_activity_log
 from ..branding import get_brand_profile
 
@@ -32,7 +36,26 @@ _MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
 async def handle_admin_api(scope, receive, send, mcp):
-    """Routeur principal de l'API admin."""
+    """Routeur principal de l'API admin.
+
+    Un magasin de tokens injoignable devient une erreur HTTP explicite. Sans
+    cela, une création répondait 201 en rendant un token que personne n'avait
+    persisté, et une révocation répondait succès sans avoir rien révoqué.
+    """
+    method = scope.get("method", "GET")
+    try:
+        return await _dispatch_admin_api(scope, receive, send, mcp)
+    except TokenStoreUnavailable as e:
+        status = 503 if method == "GET" else 502
+        return await _json_response(send, status, {
+            "status": "error",
+            "error": "token_store_unavailable",
+            "message": str(e),
+        })
+
+
+async def _dispatch_admin_api(scope, receive, send, mcp):
+    """Routage effectif des routes admin."""
     path = scope.get("path", "")
     method = scope.get("method", "GET")
 

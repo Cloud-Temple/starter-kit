@@ -1,5 +1,66 @@
 # Changelog
 
+## v2.0.5 — 2026-09-15 — Token store fails closed
+
+### Fixed
+
+- **The S3 token store no longer swallows its failures.** `load()` and `_save()`
+  printed a warning and returned. A token creation therefore answered `201` with
+  a `raw_token` that no one had persisted, a revocation reported success without
+  writing anything, and a read failure looked exactly like an empty store, so
+  every token became unknown. Both now raise `TokenStoreUnavailable`.
+- **A read failure no longer refreshes the cache timestamp.** Leaving it untouched
+  is what makes the outage visible to the next caller instead of passing for a
+  successful load of an empty store.
+- **Mutations reload before writing.** Writing from a stale cache overwrote tokens
+  created meanwhile by another instance.
+- **A token whose write failed no longer survives in memory.** It would have been
+  valid on that one instance and unknown to every other.
+
+- **Neither an error message containing `404` nor a bare HTTP 404 is read as an
+  empty store.** A failing proxy turned into "no token exists". Detection now
+  relies on the S3 error code alone.
+- **A refused mutation no longer stays applied in memory.** A permission
+  elevation whose write failed left the instance granting rights the admin had
+  seen refused with a 502. Both backends restore the touched entry, and only
+  that entry, so a mutation on another token is not swept away with it.
+- **An unreachable store at startup no longer prevents the service from
+  starting.** Refusing to start would also cost `/health`, the admin console and
+  the bootstrap key, which are the means to diagnose the outage. The service
+  starts degraded and token authentication answers 503.
+- **`TOKEN_STORE_CACHE_TTL` is now honoured by the S3 store**, which used a
+  hardcoded 300s while the status endpoint reported the configured value.
+- **A malformed Vault payload is an unavailability, not a bare `ValueError`.**
+  It used to escape the startup guard and stop the service.
+
+### Changed
+
+- `TOKEN_STORE_FAIL_MODE` is now actually read. It was declared in `config.py`,
+  documented in the README and the `.env` example, and referenced by no code path.
+  Default stays `fail_close`: past `TOKEN_STORE_STALE_GRACE` (new, 300s), an
+  unreachable store denies access rather than serving a stale cache forever.
+  `fail_open` keeps the old behaviour as an explicit, documented choice.
+- Retries during an outage use an exponential backoff from 1s to 60s, instead of
+  one S3 call per incoming request.
+- An unverifiable access is now HTTP 503, not 401. Not being able to check a
+  credential is not the same as the credential being invalid.
+- Admin API write failures return 502, read failures 503.
+- `VaultTokenStore` raises `TokenStoreUnavailable` instead of a bare `RuntimeError`,
+  so its outages get the same HTTP translation. `TokenStoreUnavailable` subclasses
+  `RuntimeError`, so existing callers and tests are unaffected.
+
+- The token store status now reports `reachable`, `cache_age_seconds` and
+  `never_loaded`. It used to report `loaded: true` and a token count while
+  authentication was already answering 503. The underlying error message stays
+  in the logs and does not travel through an HTTP response.
+
+### Known limitation
+
+A `VaultTokenStore` outage still empties the cache and stamps it as fresh, so it
+denies every token for the remainder of the TTL without retrying. That is closed,
+not open, but it deserves the same bounded stale window and backoff as the S3
+store. Tracked separately rather than widened into this fix.
+
 ## v2.0.4 — 2026-09-11 — Agentic rules refresh
 
 ### Changed

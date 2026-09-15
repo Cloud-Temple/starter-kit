@@ -29,10 +29,14 @@ class Settings(BaseSettings):
     admin_bootstrap_key: str = "change_me_in_production"
 
     # --- Token Store backend ---
-    # Valeurs: s3 (défaut), vault (à venir)
+    # Valeurs: s3 (défaut), vault
     token_store_backend: str = "s3"
     token_store_cache_ttl: int = 300
+    # fail_close (défaut) : passé la fenêtre ci-dessous, un magasin injoignable
+    # refuse l'accès au lieu de servir un cache périmé. fail_open : le cache
+    # périmé reste servi, donc une révocation peut être ignorée pendant la panne.
     token_store_fail_mode: str = "fail_close"
+    token_store_stale_grace: int = 300
 
     # --- MCP Vault Token Store (si TOKEN_STORE_BACKEND=vault) ---
     mcp_vault_url: str = "https://vault.mcp.cloud-temple.app"

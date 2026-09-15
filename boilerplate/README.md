@@ -433,6 +433,32 @@ _system/tokens.json
 
 sur le bucket S3 configuré.
 
+### Comportement en cas de panne du magasin
+
+Le magasin de tokens ne masque pas ses pannes. Une lecture ou une écriture qui
+échoue lève une erreur au lieu d'imprimer un avertissement, et l'appelant la
+traduit en réponse HTTP. Le tableau ci-dessous décrit le **backend S3**.
+
+| Situation | Comportement |
+| --- | --- |
+| Objet de tokens absent | Magasin vide, pas une panne. |
+| Lecture en échec, cache plus jeune que `TOKEN_STORE_CACHE_TTL` | Le cache est servi, rien n'est tenté. |
+| Lecture en échec, cache périmé depuis moins de `TOKEN_STORE_STALE_GRACE` | Le cache périmé est servi, la panne est journalisée. |
+| Lecture en échec au-delà de cette fenêtre, `fail_close` | Accès refusé, HTTP 503. Une révocation ne peut pas être ignorée indéfiniment. |
+| Lecture en échec au-delà de cette fenêtre, `fail_open` | Le cache périmé reste servi. Choix explicite, révocations ignorées pendant la panne. |
+| Écriture en échec | HTTP 502. Aucun token n'est rendu à l'appelant, et le token créé ne survit pas en mémoire. |
+
+Pendant une panne, les tentatives sont espacées par un backoff exponentiel
+d'une à soixante secondes, au lieu d'un appel S3 par requête entrante.
+
+Le backend Vault refuse l'accès dès la première panne, sans fenêtre de cache
+périmé ni backoff : il ne lit pas `TOKEN_STORE_FAIL_MODE` ni
+`TOKEN_STORE_STALE_GRACE`. Il refuse donc davantage que S3, jamais moins.
+
+Dans les deux cas, une panne du magasin n'empêche pas le service de démarrer :
+`/health`, la console d'administration et la clé bootstrap restent disponibles
+pour diagnostiquer, et seule l'authentification par token répond 503.
+
 ### Backend S3
 
 Variables principales :
@@ -441,6 +467,7 @@ Variables principales :
 TOKEN_STORE_BACKEND=s3
 TOKEN_STORE_CACHE_TTL=300
 TOKEN_STORE_FAIL_MODE=fail_close
+TOKEN_STORE_STALE_GRACE=300
 
 S3_ENDPOINT_URL=
 S3_ACCESS_KEY_ID=
@@ -468,6 +495,7 @@ Pour stocker les tokens clients MCP dans MCP Vault :
 TOKEN_STORE_BACKEND=vault
 TOKEN_STORE_CACHE_TTL=300
 TOKEN_STORE_FAIL_MODE=fail_close
+TOKEN_STORE_STALE_GRACE=300
 
 MCP_VAULT_URL=https://vault.mcp.cloud-temple.app
 MCP_VAULT_TOKEN_FILE=/run/secrets/mcp_vault_token

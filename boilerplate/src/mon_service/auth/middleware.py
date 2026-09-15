@@ -14,7 +14,7 @@ import collections
 from datetime import datetime, timezone
 from typing import Optional
 from .context import current_mission_context, current_token_info, mission_context_to_token_info
-from .token_store import get_token_store
+from .token_store import get_token_store, TokenStoreUnavailable
 from ..config import get_settings
 
 
@@ -72,7 +72,12 @@ class AuthMiddleware:
         elif settings.starter_kit_auth_mode != "jwt":
             token = self._extract_token(scope)
             if token:
-                token_info = self._validate_token(token)
+                try:
+                    token_info = self._validate_token(token)
+                except TokenStoreUnavailable as e:
+                    # Ne pas vérifier un accès n'est pas la même chose que le
+                    # refuser : un 401 ferait croire à un token invalide.
+                    return await self._unverifiable(scope, send, e)
 
         # Injecter dans le contextvar (même si None → les outils vérifieront)
         tok = current_token_info.set(token_info)
@@ -82,6 +87,29 @@ class AuthMiddleware:
         finally:
             current_mission_context.reset(mission_tok)
             current_token_info.reset(tok)
+
+    @staticmethod
+    async def _unverifiable(scope, send, error: Exception) -> None:
+        """Répond 503 : les accès ne peuvent pas être vérifiés."""
+        print(f"⚠️  Authentification impossible : {error}", file=sys.stderr)
+        if scope["type"] == "websocket":
+            return await send({"type": "websocket.close", "code": 1013})
+        import json as _json
+        body = _json.dumps({
+            "status": "error",
+            "error": "token_store_unavailable",
+            "message": "Vérification des accès impossible, requête refusée.",
+        }).encode()
+        await send({
+            "type": "http.response.start",
+            "status": 503,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+                (b"retry-after", b"30"),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
 
     def _extract_token(self, scope) -> Optional[str]:
         """Extrait le token depuis le header Authorization (Bearer uniquement)."""
