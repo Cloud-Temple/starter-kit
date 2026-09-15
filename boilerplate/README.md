@@ -462,7 +462,7 @@ de lever : la requête qui subit la panne reçoit bien un 503, mais les suivante
 voient un cache jugé frais et vide, donc un token inconnu, donc un 401 pendant
 tout le TTL. Un client bien élevé en conclura que son token est invalide et le
 remplacera. Le comportement est plus restrictif que S3, jamais plus permissif,
-mais le code d'erreur ment. Corrigé séparément.
+mais le code d'erreur ment. Suivi par l'issue #30.
 
 Dans les deux cas, une panne du magasin n'empêche pas le service de démarrer :
 `/health`, la console d'administration et la clé bootstrap restent disponibles

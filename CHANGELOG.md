@@ -46,7 +46,7 @@ is the one that stings: the suite claimed to cover a behaviour it never touched.
 - The Vault backend wipes `_tokens` and refreshes `_cache_time` on every load
   error before raising. The first request gets its `503`, every later one within
   the TTL gets a `401` instead. This predates the fail-close work, and it fails
-  closed rather than open, so it is tracked separately rather than rushed here.
+  closed rather than open, so it is tracked in issue #30 rather than rushed here.
 
 
 ## v2.0.6 — 2026-09-15 — Two defects found while backporting v2.0.5
