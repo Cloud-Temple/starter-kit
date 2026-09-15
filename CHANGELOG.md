@@ -19,11 +19,32 @@ both were in the boilerplate that every derived service copies.
   presenting any bearer received the boto3 error, which names the internal S3
   endpoint and the bucket. The body is now generic; the detail stays on stderr.
 
+### Fixed — findings from the independent review of the mcp-office backport
+
+- **A failed write is ambiguous.** The store may have applied the request and
+  lost its response on the way back. Undoing the mutation in memory while
+  keeping the cache fresh made a revoked token valid again on that instance,
+  for up to a full TTL, while the store already held it as dead. The rule is now
+  to keep whichever state denies more: a refused creation or elevation is
+  removed, a revocation is kept. Either way the cache is marked for
+  revalidation, so the next read reloads instead of serving an uncertain state.
+- **Mutations are serialised inside the process.** `create()`, `revoke()` and
+  `update()` are read-modify-write. Two concurrent calls could interleave and
+  lose one. A reentrant lock serialises them, and `load()` publishes its result
+  under that same lock.
+
 ### Tests
 
-- `tests/test_token_store_fail_close.py` grows to 27 cases. The mutation table in
-  its docstring is re-measured on the new suite: eight mutations of the fixed
+- `tests/test_token_store_fail_close.py` grows to 30 cases. The mutation table in
+  its docstring is re-measured on the new suite: twelve mutations of the fixed
   code, each caught by at least one test, none silent.
+
+### Known limit
+
+The store is a single JSON file rewritten whole, with no conditional write. Two
+**instances** can read the same state, each write their own, and the last one
+overwrite the other. Reloading before mutating narrows that window; closing it
+needs an ETag and `If-Match`, tracked separately.
 
 ## v2.0.5 — 2026-09-15 — Token store fails closed
 

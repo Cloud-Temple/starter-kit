@@ -7,25 +7,35 @@ une création répondait 201 avec un token que personne n'avait persisté, une
 révocation répondait succès sans rien révoquer, et une panne de lecture se
 présentait comme un magasin vide donc comme un token inconnu.
 
-Preuves par mutation, mesurées sur ce fichier et reproductibles. Chaque défaut
-est réintroduit par une modification précise, et la suite tombe ainsi :
+Une écriture qui échoue est ambiguë : le magasin a pu l'appliquer et perdre sa
+réponse en route. La règle retenue est de garder localement l'état le plus
+restrictif, et de marquer le cache à revalider.
+
+Preuves par mutation, mesurées sur ces 30 tests et reproductibles. Chaque
+défaut est réintroduit par une modification précise, et la suite tombe ainsi :
 
     mutation appliquée au code corrigé                      rouges
     -----------------------------------------------------   ------
-    `load()` ravale sa levée, l'avalement d'origine           7/27
-    `_persist_or_restore` ne restaure plus rien               5/27
-    `_save()` ravale sa levée                                 4/27
-    `handle_admin_api` n'attrape plus TokenStoreUnavailable   4/27
-    `_guard_stale` ne lève jamais                             3/27
-    `CACHE_TTL` replie un `0` configuré sur 300               2/27
-    l'API admin rend de nouveau `str(e)` dans le corps        2/27
-    `_is_missing_object` accepte de nouveau un statut 404 nu  1/27
+    `load()` ravale sa levée, l'avalement d'origine           7/30
+    `_persist_or_restore` n'annule rien et ne marque rien     7/30
+    `_save()` ravale sa levée                                 6/30
+    `handle_admin_api` n'attrape plus TokenStoreUnavailable   4/30
+    `_guard_stale` ne lève jamais                             3/30
+    une révocation ratée est annulée en mémoire               3/30
+    une écriture douteuse ne marque plus le cache             3/30
+    `CACHE_TTL` replie un `0` configuré sur 300               2/30
+    l'API admin rend de nouveau `str(e)` dans le corps        2/30
+    `_maybe_refresh` ignore le drapeau de revalidation        1/30
+    les mutations ne sont plus sérialisées                    1/30
+    `_is_missing_object` accepte de nouveau un statut 404 nu  1/30
 
 Aucun de ces chiffres n'est une estimation, et aucune mutation ne passe
-inaperçue. Les cas non couverts par ces huit mutations gardent le démarrage
-dégradé, le rechargement avant mutation et la normalisation des erreurs du
-magasin Vault. Reproduire : appliquer une mutation au fichier source, relancer
+inaperçue. Reproduire : appliquer une mutation au fichier source, relancer
 `pytest tests/test_token_store_fail_close.py`, compter, annuler.
+
+Limite connue et non couverte ici : sans écriture conditionnelle côté magasin,
+deux instances peuvent encore s'écraser mutuellement. Le verrou vérifié plus
+bas ne sérialise que ce process.
 """
 
 import io
@@ -261,7 +271,13 @@ def test_une_elevation_de_permissions_refusee_n_est_pas_conservee_en_memoire():
     assert store._tokens[token["hash"]]["permissions"] == ["read"]
 
 
-def test_une_revocation_refusee_ne_reste_pas_appliquee_en_memoire():
+def test_une_revocation_refusee_garde_le_refus_en_memoire():
+    """Une écriture qui échoue est ambiguë : la requête a pu aboutir sans sa réponse.
+
+    Annuler la révocation rendrait le token valide ici alors que le magasin le
+    donne peut-être pour mort. On garde donc l'état le plus restrictif, et on
+    marque le cache à revalider.
+    """
     token = a_token()
     store, _ = make_store(put_error=RuntimeError("S3 503 SlowDown"),
                           payload={"tokens": [token]})
@@ -269,7 +285,98 @@ def test_une_revocation_refusee_ne_reste_pas_appliquee_en_memoire():
     with pytest.raises(TokenStoreUnavailable):
         store.revoke(token["hash"][:12])
 
-    assert store._tokens[token["hash"]]["revoked"] is False
+    assert store._tokens[token["hash"]]["revoked"] is True
+    assert store._needs_reload is True
+
+
+def test_une_ecriture_appliquee_dont_la_reponse_se_perd_n_est_pas_annulee():
+    """Le cas reproduit par la revue indépendante : le PUT aboutit, le client lève."""
+    token = a_token()
+    store, fake = make_store(payload={"tokens": [token]})
+
+    ecrits = {}
+
+    def put_object(**kwargs):
+        ecrits["payload"] = json.loads(kwargs["Body"].decode())  # le magasin a écrit
+        raise RuntimeError("RequestTimeout après commit")
+
+    fake.put_object = put_object
+
+    with pytest.raises(TokenStoreUnavailable):
+        store.revoke(token["hash"][:12])
+
+    assert ecrits["payload"]["tokens"][0]["revoked"] is True
+    assert store._tokens[token["hash"]]["revoked"] is True
+    assert store._needs_reload is True
+
+
+def test_une_ecriture_douteuse_force_la_relecture_suivante():
+    """Sans le drapeau, le cache resterait « frais » alors qu'il est incertain."""
+    token = a_token()
+    store, fake = make_store(put_error=RuntimeError("S3 503 SlowDown"),
+                             payload={"tokens": [token]},
+                             token_store_cache_ttl=10_000)
+    store.load()
+    with pytest.raises(TokenStoreUnavailable):
+        store.revoke(token["hash"][:12])
+
+    fake.put_error = None
+    store._backoff_until = 0
+    lectures = fake.get_calls
+    store.get_by_hash(token["hash"])
+
+    assert fake.get_calls == lectures + 1
+    assert store._needs_reload is False
+
+
+def test_deux_mutations_concurrentes_dans_un_process_ne_s_entrelacent_pas():
+    """Une mutation est un lire-modifier-écrire : l'entrelacer en perd une.
+
+    Ce verrou ne couvre que ce process : deux instances peuvent toujours
+    s'écraser, faute d'écriture conditionnelle côté magasin.
+    """
+    import threading
+
+    token = a_token()
+    journal = []
+    verrou_journal = threading.Lock()
+
+    class S3Lent:
+        def __init__(self):
+            self.payload = {"tokens": [token]}
+
+        def get_object(self, **kwargs):
+            with verrou_journal:
+                journal.append("get")
+            time.sleep(0.02)
+            return {"Body": io.BytesIO(json.dumps(self.payload).encode())}
+
+        def put_object(self, **kwargs):
+            with verrou_journal:
+                journal.append("put")
+            self.payload = json.loads(kwargs["Body"].decode())
+
+    store = S3TokenStore(DummySettings())
+    store._s3_client = S3Lent()
+
+    resultats = {}
+    fils = [
+        threading.Thread(target=lambda: resultats.__setitem__(
+            "cree", store.create("agent-b", ["read"]))),
+        threading.Thread(target=lambda: resultats.__setitem__(
+            "revoque", store.revoke(token["hash"][:12]))),
+    ]
+    for f in fils:
+        f.start()
+    for f in fils:
+        f.join()
+
+    assert journal == ["get", "put", "get", "put"], journal
+
+    final = {t["hash"]: t for t in store._s3_client.payload["tokens"]}
+    assert resultats["revoque"] is True
+    assert final[token["hash"]]["revoked"] is True
+    assert resultats["cree"]["hash"] in final
 
 
 class VaultHorsService(VaultTokenStore):
@@ -293,7 +400,9 @@ def test_le_magasin_vault_restaure_aussi_son_etat_apres_un_refus():
 
     with pytest.raises(TokenStoreUnavailable):
         store.revoke(token["hash"][:12])
-    assert store._tokens[token["hash"]]["revoked"] is False
+    # Une révocation dont l'écriture échoue garde le refus : l'annuler rendrait
+    # le token valide ici alors que Vault l'a peut-être déjà marqué mort.
+    assert store._tokens[token["hash"]]["revoked"] is True
 
     with pytest.raises(TokenStoreUnavailable):
         store.create(client_name="agent", permissions=["read"])
