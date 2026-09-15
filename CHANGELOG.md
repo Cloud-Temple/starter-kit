@@ -17,6 +17,19 @@
 - **A token whose write failed no longer survives in memory.** It would have been
   valid on that one instance and unknown to every other.
 
+- **An error message containing `404` is no longer read as an empty store.**
+  The check matched arbitrary text, so a failing proxy turned into "no token
+  exists". Detection now uses the S3 error code, not the message.
+- **A refused mutation no longer stays applied in memory.** A permission
+  elevation whose write failed left the instance granting rights the admin had
+  seen refused with a 502. Both backends restore their previous state.
+- **An unreachable store at startup no longer prevents the service from
+  starting.** Refusing to start would also cost `/health`, the admin console and
+  the bootstrap key, which are the means to diagnose the outage. The service
+  starts degraded and token authentication answers 503.
+- **`TOKEN_STORE_CACHE_TTL` is now honoured by the S3 store**, which used a
+  hardcoded 300s while the status endpoint reported the configured value.
+
 ### Changed
 
 - `TOKEN_STORE_FAIL_MODE` is now actually read. It was declared in `config.py`,
@@ -32,6 +45,11 @@
 - `VaultTokenStore` raises `TokenStoreUnavailable` instead of a bare `RuntimeError`,
   so its outages get the same HTTP translation. `TokenStoreUnavailable` subclasses
   `RuntimeError`, so existing callers and tests are unaffected.
+
+- The token store status now reports `reachable`, `cache_age_seconds` and
+  `never_loaded`. It used to report `loaded: true` and a token count while
+  authentication was already answering 503. The underlying error message stays
+  in the logs and does not travel through an HTTP response.
 
 ### Known limitation
 

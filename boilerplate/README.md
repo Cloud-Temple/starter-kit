@@ -437,7 +437,7 @@ sur le bucket S3 configuré.
 
 Le magasin de tokens ne masque pas ses pannes. Une lecture ou une écriture qui
 échoue lève une erreur au lieu d'imprimer un avertissement, et l'appelant la
-traduit en réponse HTTP.
+traduit en réponse HTTP. Le tableau ci-dessous décrit le **backend S3**.
 
 | Situation | Comportement |
 | --- | --- |
@@ -450,6 +450,14 @@ traduit en réponse HTTP.
 
 Pendant une panne, les tentatives sont espacées par un backoff exponentiel
 d'une à soixante secondes, au lieu d'un appel S3 par requête entrante.
+
+Le backend Vault refuse l'accès dès la première panne, sans fenêtre de cache
+périmé ni backoff : il ne lit pas `TOKEN_STORE_FAIL_MODE` ni
+`TOKEN_STORE_STALE_GRACE`. Il refuse donc davantage que S3, jamais moins.
+
+Dans les deux cas, une panne du magasin n'empêche pas le service de démarrer :
+`/health`, la console d'administration et la clé bootstrap restent disponibles
+pour diagnostiquer, et seule l'authentification par token répond 503.
 
 ### Backend S3
 

@@ -7,7 +7,17 @@ une création répondait 201 avec un token que personne n'avait persisté, une
 révocation répondait succès sans rien révoquer, et une panne de lecture se
 présentait comme un magasin vide donc comme un token inconnu.
 
-Chaque test ci-dessous échoue sur le code d'avant le correctif.
+Preuves par mutation, mesurées et non supposées. En réintroduisant chaque
+défaut dans le code, la suite de ce fichier tombe ainsi :
+
+    load() ravale ses erreurs                    5 tests sur 19
+    _save() ravale ses erreurs                   4 tests sur 19
+    l'API admin ne traduit plus la panne         2 tests sur 19
+    TOKEN_STORE_FAIL_MODE n'est plus lu          2 tests sur 19
+
+Les cas restants gardent la détection stricte de l'objet absent, le TTL lu
+dans la configuration, le démarrage dégradé, l'honnêteté du statut et la
+restauration d'état du magasin Vault après un refus d'écriture.
 """
 
 import io
@@ -28,9 +38,13 @@ if str(SRC) not in sys.path:
 os.environ.setdefault("ADMIN_BOOTSTRAP_KEY", "test-bootstrap-key")
 os.environ.setdefault("MCP_SERVER_NAME", "starter-kit-test")
 
+from mon_service.auth import token_store as ts  # noqa: E402
 from mon_service.auth.token_store import (  # noqa: E402
     S3TokenStore,
     TokenStoreUnavailable,
+    VaultTokenStore,
+    _load_at_startup,
+    get_token_store_status,
 )
 from mon_service.admin import api as admin_api  # noqa: E402
 from mon_service.config import get_settings  # noqa: E402
@@ -47,6 +61,7 @@ class DummySettings:
     s3_bucket_name: str = "bucket"
     token_store_fail_mode: str = "fail_close"
     token_store_stale_grace: int = 300
+    token_store_cache_ttl: int = 300
 
 
 class FakeS3:
@@ -108,13 +123,38 @@ def test_une_panne_de_lecture_est_levee_et_ne_vieillit_pas_le_cache():
     assert store._tokens == {}
 
 
+class ObjetAbsent(Exception):
+    """Erreur boto3 réaliste : le code vit dans response, pas dans le message."""
+    response = {"Error": {"Code": "NoSuchKey"}, "ResponseMetadata": {"HTTPStatusCode": 404}}
+
+
+class PanneDeProxy(Exception):
+    """Une passerelle en panne peut parler de 404 sans que l'objet soit absent."""
+
+
 def test_un_objet_absent_est_un_magasin_vide_pas_une_panne():
-    store, _ = make_store(get_error=RuntimeError("NoSuchKey: the key does not exist"))
+    store, _ = make_store(get_error=ObjetAbsent("the specified key does not exist"))
 
     store.load()
 
     assert store._tokens == {}
     assert store._cache_time > 0
+
+
+def test_une_panne_qui_parle_de_404_n_est_pas_un_objet_absent():
+    """Chercher « 404 » dans le texte de l'erreur confondait panne et magasin vide."""
+    store, _ = make_store(get_error=PanneDeProxy("gateway returned HTTP 404 during outage"))
+
+    with pytest.raises(TokenStoreUnavailable):
+        store.load()
+
+    assert store._cache_time == 0
+
+
+def test_le_ttl_du_cache_vient_de_la_configuration():
+    store, _ = make_store(token_store_cache_ttl=60)
+
+    assert store.CACHE_TTL == 60
 
 
 # --- Écriture ----------------------------------------------------------------
@@ -166,13 +206,96 @@ def test_une_mutation_recharge_avant_d_ecrire():
     assert fake.get_calls == 1
 
 
+def test_une_elevation_de_permissions_refusee_n_est_pas_conservee_en_memoire():
+    """Un 502 rendu à l'admin ne doit pas laisser les droits accordés ici."""
+    token = a_token()
+    token["permissions"] = ["read"]
+    store, _ = make_store(put_error=RuntimeError("S3 503 SlowDown"),
+                          payload={"tokens": [token]})
+
+    with pytest.raises(TokenStoreUnavailable):
+        store.update(token["hash"][:12], permissions=["read", "write", "admin"])
+
+    assert store._tokens[token["hash"]]["permissions"] == ["read"]
+
+
+def test_une_revocation_refusee_ne_reste_pas_appliquee_en_memoire():
+    token = a_token()
+    store, _ = make_store(put_error=RuntimeError("S3 503 SlowDown"),
+                          payload={"tokens": [token]})
+
+    with pytest.raises(TokenStoreUnavailable):
+        store.revoke(token["hash"][:12])
+
+    assert store._tokens[token["hash"]]["revoked"] is False
+
+
+class VaultHorsService(VaultTokenStore):
+    """Vault dont la lecture marche et dont l'écriture est refusée."""
+
+    def load(self):
+        self._cache_time = time.time()
+
+    def _save(self):
+        raise TokenStoreUnavailable("MCP Vault unavailable while saving token store")
+
+
+def test_le_magasin_vault_restaure_aussi_son_etat_apres_un_refus():
+    store = VaultHorsService(DummySettings())
+    token = a_token()
+    store._tokens = {token["hash"]: token}
+
+    with pytest.raises(TokenStoreUnavailable):
+        store.update(token["hash"][:12], permissions=["admin"])
+    assert store._tokens[token["hash"]]["permissions"] == ["read"]
+
+    with pytest.raises(TokenStoreUnavailable):
+        store.revoke(token["hash"][:12])
+    assert store._tokens[token["hash"]]["revoked"] is False
+
+    with pytest.raises(TokenStoreUnavailable):
+        store.create(client_name="agent", permissions=["read"])
+    assert set(store._tokens) == {token["hash"]}
+
+
+# --- Démarrage et diagnostic -------------------------------------------------
+
+def test_une_panne_au_demarrage_ne_empeche_pas_le_service_de_demarrer():
+    """Refuser de démarrer coûterait /health, la console et la clé bootstrap,
+    c'est-à-dire les moyens de diagnostiquer la panne."""
+    store, _ = make_store(get_error=RuntimeError("S3 Connection timeout"))
+
+    _load_at_startup(store, "S3")  # ne doit pas lever
+
+    # Démarré mais dégradé : l'authentification par token refuse.
+    with pytest.raises(TokenStoreUnavailable):
+        store.get_by_hash("a" * 64)
+
+
+def test_le_statut_ne_pretend_pas_que_le_magasin_est_joignable(monkeypatch):
+    store, _ = make_store(get_error=RuntimeError("S3 Connection timeout"))
+    monkeypatch.setattr(ts, "get_token_store", lambda: store)
+
+    avant = get_token_store_status()
+    assert avant["reachable"] is True
+    assert avant["never_loaded"] is True
+
+    with pytest.raises(TokenStoreUnavailable):
+        store.load()
+
+    apres = get_token_store_status()
+    assert apres["reachable"] is False
+    # Le message d'erreur du magasin n'a pas à sortir par une réponse HTTP.
+    assert "Connection timeout" not in json.dumps(apres)
+
+
 # --- Cache périmé ------------------------------------------------------------
 
 def _store_en_panne_avec_cache(age_offset):
     token = a_token()
     store, fake = make_store(get_error=RuntimeError("S3 Connection timeout"))
     store._tokens = {token["hash"]: token}
-    store._cache_time = time.time() - (S3TokenStore.CACHE_TTL + age_offset)
+    store._cache_time = time.time() - (store.CACHE_TTL + age_offset)
     return store, fake, token
 
 
@@ -194,7 +317,7 @@ def test_fail_open_sert_le_cache_perime_quand_il_est_demande_explicitement():
     store, _ = make_store(get_error=RuntimeError("S3 Connection timeout"),
                           token_store_fail_mode="fail_open")
     store._tokens = {token["hash"]: token}
-    store._cache_time = time.time() - (S3TokenStore.CACHE_TTL + 86400)
+    store._cache_time = time.time() - (store.CACHE_TTL + 86400)
 
     assert store.get_by_hash(token["hash"]) == token
 

@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     admin_bootstrap_key: str = "change_me_in_production"
 
     # --- Token Store backend ---
-    # Valeurs: s3 (défaut), vault (à venir)
+    # Valeurs: s3 (défaut), vault
     token_store_backend: str = "s3"
     token_store_cache_ttl: int = 300
     # fail_close (défaut) : passé la fenêtre ci-dessous, un magasin injoignable

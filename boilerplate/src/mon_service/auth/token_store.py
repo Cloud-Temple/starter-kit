@@ -13,6 +13,7 @@ Pattern :
 
 import sys
 import time
+import copy
 import json
 import hashlib
 from typing import Optional
@@ -79,6 +80,14 @@ def get_token_store_status() -> dict:
         "cache_ttl": int(getattr(settings, "token_store_cache_ttl", 300) or 300),
     }
 
+    if store is not None:
+        cache_time = getattr(store, "_cache_time", 0) or 0
+        # Le message d'erreur reste dans les logs : il n'a pas à transiter par
+        # une réponse HTTP, même d'administration.
+        status["reachable"] = getattr(store, "_last_error", None) is None
+        status["cache_age_seconds"] = int(time.time() - cache_time) if cache_time else None
+        status["never_loaded"] = not bool(cache_time)
+
     if backend == "s3":
         status["configured"] = bool(settings.s3_endpoint_url and settings.s3_bucket_name)
         status["bucket_name"] = settings.s3_bucket_name if settings.s3_bucket_name else ""
@@ -93,6 +102,24 @@ def get_token_store_status() -> dict:
     return status
 
 
+def _load_at_startup(store, label: str) -> None:
+    """Charge le magasin au démarrage sans empêcher le service de démarrer.
+
+    Refuser de démarrer sur une panne du magasin coûterait aussi `/health`, la
+    console admin et la clé bootstrap, c'est-à-dire les moyens de diagnostiquer
+    et de corriger. Le service démarre dégradé : l'authentification par token
+    répond 503 tant que le magasin est injoignable.
+    """
+    try:
+        store.load()
+    except TokenStoreUnavailable as e:
+        print(f"⚠️  Token Store {label} injoignable au démarrage : {e}", file=sys.stderr)
+        print("   → démarrage dégradé, authentification par token refusée (HTTP 503)",
+              file=sys.stderr)
+        return
+    print(f"🔑 Token Store {label} initialisé ({store.count()} tokens)", file=sys.stderr)
+
+
 def init_token_store():
     """Initialise le Token Store au démarrage selon TOKEN_STORE_BACKEND."""
     global _token_store
@@ -102,8 +129,7 @@ def init_token_store():
     if backend == "s3":
         if settings.s3_endpoint_url and settings.s3_bucket_name:
             _token_store = S3TokenStore(settings)
-            _token_store.load()
-            print(f"🔑 Token Store S3 initialisé ({_token_store.count()} tokens)", file=sys.stderr)
+            _load_at_startup(_token_store, "S3")
         else:
             _token_store = None
             print("🔑 Token Store S3 non configuré (bootstrap key uniquement)", file=sys.stderr)
@@ -112,8 +138,7 @@ def init_token_store():
     if backend == "vault":
         validate_vault_settings(settings)
         _token_store = VaultTokenStore(settings)
-        _token_store.load()
-        print(f"🔑 Token Store Vault initialisé ({_token_store.count()} tokens)", file=sys.stderr)
+        _load_at_startup(_token_store, "Vault")
         return
 
     raise ValueError(f"Unsupported TOKEN_STORE_BACKEND: {backend}")
@@ -122,6 +147,40 @@ def init_token_store():
 # =============================================================================
 # S3TokenStore — Stockage S3 + cache mémoire TTL
 # =============================================================================
+
+def _is_missing_object(error: Exception) -> bool:
+    """Vrai seulement si le magasin n'existe pas encore.
+
+    Chercher « 404 » dans le texte de l'erreur transformait une panne de proxy
+    en magasin vide, donc en « aucun token connu », sans rien signaler.
+    """
+    code = ""
+    status = None
+    response = getattr(error, "response", None)
+    if isinstance(response, dict):
+        code = str(response.get("Error", {}).get("Code", "") or "")
+        meta = response.get("ResponseMetadata", {})
+        if isinstance(meta, dict):
+            status = meta.get("HTTPStatusCode")
+    if code == "NoSuchKey" or type(error).__name__ == "NoSuchKey":
+        return True
+    # Certains fournisseurs S3 compatibles ne renseignent pas le code.
+    return status == 404 and code in ("", "NoSuchKey", "NotFound")
+
+
+def _persist_or_restore(store, previous: dict) -> None:
+    """Écrit l'état courant, ou remet l'état précédent si l'écriture échoue.
+
+    Sans cela, une mutation refusée par le magasin resterait appliquée en
+    mémoire : cette instance accorderait des permissions que l'administrateur
+    a vues refusées en 502.
+    """
+    try:
+        store._save()
+    except TokenStoreUnavailable:
+        store._tokens = previous
+        raise
+
 
 class TokenStoreUnavailable(RuntimeError):
     """Le magasin de tokens est injoignable, ou refuse d'écrire.
@@ -140,7 +199,7 @@ class S3TokenStore:
     - CRUD : create, list, info, revoke
     """
 
-    CACHE_TTL = 300  # 5 minutes
+    DEFAULT_CACHE_TTL = 300  # 5 minutes
     S3_KEY = "_system/tokens.json"
     BACKOFF_MIN = 1.0   # secondes
     BACKOFF_MAX = 60.0  # secondes
@@ -154,6 +213,15 @@ class S3TokenStore:
         self._backoff: float = 0.0
         self._backoff_until: float = 0.0
         self._last_error: Optional[str] = None
+
+    @property
+    def CACHE_TTL(self) -> int:
+        """TTL du cache, lu dans la configuration et non figé à 300s."""
+        try:
+            return int(getattr(self.settings, "token_store_cache_ttl", self.DEFAULT_CACHE_TTL)
+                       or self.DEFAULT_CACHE_TTL)
+        except (TypeError, ValueError):
+            return self.DEFAULT_CACHE_TTL
 
     @property
     def fail_mode(self) -> str:
@@ -223,7 +291,7 @@ class S3TokenStore:
             self._cache_time = time.time()
             self._clear_failure()
         except Exception as e:
-            if "NoSuchKey" in str(e) or "404" in str(e):
+            if _is_missing_object(e):
                 self._tokens = {}
                 self._cache_time = time.time()
                 self._clear_failure()
@@ -330,14 +398,11 @@ class S3TokenStore:
         # Recharger avant de muter : écrire depuis un cache périmé écraserait
         # les tokens créés entre-temps par une autre instance.
         self.load()
+        previous = copy.deepcopy(self._tokens)
         self._tokens[token_hash] = token_info
-        try:
-            self._save()
-        except TokenStoreUnavailable:
-            # Ne pas garder en mémoire un token que le magasin n'a pas accepté :
-            # il serait valide sur cette instance et inconnu de toutes les autres.
-            self._tokens.pop(token_hash, None)
-            raise
+        # Un token que le magasin n'a pas accepté ne doit pas survivre ici :
+        # il serait valide sur cette instance et inconnu de toutes les autres.
+        _persist_or_restore(self, previous)
 
         return {"raw_token": raw_token, **token_info}
 
@@ -364,13 +429,14 @@ class S3TokenStore:
         if len(hash_prefix) < 8:
             return False
         self.load()
+        previous = copy.deepcopy(self._tokens)
         for h, t in self._tokens.items():
             if h.startswith(hash_prefix):
                 t["revoked"] = True
                 t["revoked_at"] = __import__("datetime").datetime.now(
                     __import__("datetime").timezone.utc
                 ).isoformat()
-                self._save()
+                _persist_or_restore(self, previous)
                 return True
         return False
 
@@ -386,6 +452,7 @@ class S3TokenStore:
             return {"status": "error", "message": "Hash prefix trop court (min 8 caractères)"}
 
         self.load()
+        previous = copy.deepcopy(self._tokens)
         for h, t in self._tokens.items():
             if h.startswith(hash_prefix):
                 updated_fields = []
@@ -404,7 +471,7 @@ class S3TokenStore:
 
                 # Invalider le cache pour forcer le rechargement
                 self._cache_time = 0
-                self._save()
+                _persist_or_restore(self, previous)
 
                 return {
                     "status": "updated",
@@ -608,8 +675,9 @@ class VaultTokenStore:
             "revoked": False,
         }
 
+        previous = copy.deepcopy(self._tokens)
         self._tokens[token_hash] = token_info
-        self._save()
+        _persist_or_restore(self, previous)
 
         return {"raw_token": raw_token, **token_info}
 
@@ -630,6 +698,7 @@ class VaultTokenStore:
         if not target_hash:
             return {"status": "error", "message": f"Token {hash_prefix[:12]}… non trouvé"}
 
+        previous = copy.deepcopy(self._tokens)
         token = self._tokens[target_hash]
         if token.get("revoked"):
             return {"status": "error", "message": f"Token {hash_prefix[:12]}… est révoqué"}
@@ -646,9 +715,10 @@ class VaultTokenStore:
             updated_fields.append("allowed_resources")
 
         if not updated_fields:
+            self._tokens = previous
             return {"status": "error", "message": "Aucun champ à modifier"}
 
-        self._save()
+        _persist_or_restore(self, previous)
 
         return {
             "status": "updated",
@@ -668,11 +738,12 @@ class VaultTokenStore:
         self.load()
 
         from datetime import datetime, timezone
+        previous = copy.deepcopy(self._tokens)
         for h, t in self._tokens.items():
             if h.startswith(hash_prefix):
                 t["revoked"] = True
                 t["revoked_at"] = datetime.now(timezone.utc).isoformat()
-                self._save()
+                _persist_or_restore(self, previous)
                 return True
         return False
 
