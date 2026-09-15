@@ -14,6 +14,8 @@ Pattern :
 import sys
 import time
 import copy
+import functools
+import threading
 import json
 import hashlib
 from typing import Optional
@@ -66,6 +68,26 @@ def get_token_store() -> Optional[object]:
     return _token_store
 
 
+_DEFAULT_CACHE_TTL = 300  # secondes
+
+
+def _configured_cache_ttl(settings) -> int:
+    """TTL du cache de tokens, en respectant un `0` explicite.
+
+    Un `0` configuré signifie « ne jamais servir depuis le cache ». Le repli
+    `int(...) or 300` le transformait silencieusement en 300 secondes, et
+    rendait à l'exploitant la fenêtre de révocation de cinq minutes qu'il
+    venait précisément de refuser.
+    """
+    raw = getattr(settings, "token_store_cache_ttl", None)
+    if raw is None or raw == "":
+        return _DEFAULT_CACHE_TTL
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return _DEFAULT_CACHE_TTL
+
+
 def get_token_store_status() -> dict:
     """Return non-sensitive status information about the active token store."""
     settings = get_settings()
@@ -77,7 +99,7 @@ def get_token_store_status() -> dict:
         "configured": False,
         "loaded": store is not None,
         "tokens_count": store.count() if store else 0,
-        "cache_ttl": int(getattr(settings, "token_store_cache_ttl", 300) or 300),
+        "cache_ttl": _configured_cache_ttl(settings),
     }
 
     if store is not None:
@@ -166,21 +188,51 @@ def _is_missing_object(error: Exception) -> bool:
     return code == "NoSuchKey" or type(error).__name__ == "NoSuchKey"
 
 
-def _persist_or_restore(store, token_hash: str, previous_entry) -> None:
-    """Écrit l'état courant, ou remet la seule entrée touchée si l'écriture échoue.
+def _serialise(method):
+    """Sérialise une mutation du magasin.
 
-    Sans cela, une mutation refusée par le magasin resterait appliquée en
-    mémoire : cette instance accorderait des permissions que l'administrateur
-    a vues refusées en 502. La restauration est limitée à l'entrée concernée,
-    pour ne pas emporter une mutation portant sur un autre token.
+    `create`, `revoke` et `update` sont des lire-modifier-écrire. Deux appels
+    concurrents pouvaient s'entrelacer, et le second écraser la mutation du
+    premier. Ce verrou ne couvre que ce process : sans écriture conditionnelle
+    côté magasin, deux instances peuvent toujours s'écraser mutuellement.
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
+def _persist_or_restore(store, token_hash: str, previous_entry,
+                        keep_on_failure: bool = False) -> None:
+    """Écrit l'état courant, ou garde en mémoire l'état le plus restrictif.
+
+    Une écriture qui échoue est ambiguë : le magasin a pu appliquer la requête
+    et perdre sa réponse en route. On ne peut donc pas savoir laquelle des deux
+    versions fait foi, et la seule règle sûre est de conserver localement celle
+    qui refuse le plus :
+
+    - une création ou une élévation refusée est retirée (`keep_on_failure`
+      faux) : cette instance n'accorde pas un accès que le magasin n'a pas
+      enregistré ;
+    - une révocation est conservée (`keep_on_failure` vrai) : l'annuler
+      rendrait valide, ici, un token que le magasin a peut-être déjà marqué
+      mort.
+
+    La restauration reste limitée à l'entrée concernée, pour ne pas emporter
+    une mutation portant sur un autre token. Dans les deux cas le cache est
+    marqué à revalider, pour que la lecture suivante aille chercher la vérité
+    plutôt que de servir un état incertain.
     """
     try:
         store._save()
     except TokenStoreUnavailable:
-        if previous_entry is None:
-            store._tokens.pop(token_hash, None)
-        else:
-            store._tokens[token_hash] = previous_entry
+        if not keep_on_failure:
+            if previous_entry is None:
+                store._tokens.pop(token_hash, None)
+            else:
+                store._tokens[token_hash] = previous_entry
+        store._needs_reload = True
         raise
 
 
@@ -201,7 +253,7 @@ class S3TokenStore:
     - CRUD : create, list, info, revoke
     """
 
-    DEFAULT_CACHE_TTL = 300  # 5 minutes
+    DEFAULT_CACHE_TTL = _DEFAULT_CACHE_TTL
     S3_KEY = "_system/tokens.json"
     BACKOFF_MIN = 1.0   # secondes
     BACKOFF_MAX = 60.0  # secondes
@@ -215,15 +267,18 @@ class S3TokenStore:
         self._backoff: float = 0.0
         self._backoff_until: float = 0.0
         self._last_error: Optional[str] = None
+        # Une écriture au sort incertain rend le cache douteux : la lecture
+        # suivante doit revalider, sans attendre l'expiration du TTL.
+        self._needs_reload: bool = False
+        # Une mutation est un lire-modifier-écrire : la sérialiser évite qu'une
+        # lecture concurrente remplace `_tokens` entre le rechargement et
+        # l'écriture. Ne dit rien des autres instances.
+        self._lock = threading.RLock()
 
     @property
     def CACHE_TTL(self) -> int:
         """TTL du cache, lu dans la configuration et non figé à 300s."""
-        try:
-            return int(getattr(self.settings, "token_store_cache_ttl", self.DEFAULT_CACHE_TTL)
-                       or self.DEFAULT_CACHE_TTL)
-        except (TypeError, ValueError):
-            return self.DEFAULT_CACHE_TTL
+        return _configured_cache_ttl(self.settings)
 
     @property
     def fail_mode(self) -> str:
@@ -289,13 +344,17 @@ class S3TokenStore:
             s3 = self._get_s3()
             resp = s3.get_object(Bucket=self.settings.s3_bucket_name, Key=self.S3_KEY)
             data = json.loads(resp["Body"].read().decode())
-            self._tokens = {t["hash"]: t for t in data.get("tokens", [])}
-            self._cache_time = time.time()
+            with self._lock:
+                self._tokens = {t["hash"]: t for t in data.get("tokens", [])}
+                self._cache_time = time.time()
+                self._needs_reload = False
             self._clear_failure()
         except Exception as e:
             if _is_missing_object(e):
-                self._tokens = {}
-                self._cache_time = time.time()
+                with self._lock:
+                    self._tokens = {}
+                    self._cache_time = time.time()
+                    self._needs_reload = False
                 self._clear_failure()
                 return
             self._note_failure(e)
@@ -310,10 +369,9 @@ class S3TokenStore:
         """
         try:
             s3 = self._get_s3()
-            data = json.dumps(
-                {"tokens": list(self._tokens.values())},
-                indent=2, default=str,
-            )
+            with self._lock:
+                instantane = list(self._tokens.values())
+            data = json.dumps({"tokens": instantane}, indent=2, default=str)
             s3.put_object(
                 Bucket=self.settings.s3_bucket_name,
                 Key=self.S3_KEY,
@@ -334,7 +392,7 @@ class S3TokenStore:
         de révocations ignorées tant que la panne dure.
         """
         age = time.time() - self._cache_time
-        if age <= self.CACHE_TTL:
+        if age <= self.CACHE_TTL and not self._needs_reload:
             return
         if time.time() < self._backoff_until:
             return self._guard_stale(age)
@@ -371,6 +429,7 @@ class S3TokenStore:
                 return None
         return token
 
+    @_serialise
     def create(self, client_name: str, permissions: list, allowed_resources: list = None,
                expires_in_days: int = 90, email: str = "", policy_id: str = "") -> dict:
         """Crée un nouveau token et le sauvegarde sur S3."""
@@ -423,6 +482,7 @@ class S3TokenStore:
             for t in self._tokens.values()
         ]
 
+    @_serialise
     def revoke(self, hash_prefix: str) -> bool:
         """Révoque un token par préfixe de hash (≥8 caractères requis)."""
         # ⚠️ Min 8 chars pour éviter de révoquer le mauvais token
@@ -437,10 +497,12 @@ class S3TokenStore:
                 t["revoked_at"] = __import__("datetime").datetime.now(
                     __import__("datetime").timezone.utc
                 ).isoformat()
-                _persist_or_restore(self, h, previous_entry)
+                # Une écriture ratée est ambiguë : garder le refus localement.
+                _persist_or_restore(self, h, previous_entry, keep_on_failure=True)
                 return True
         return False
 
+    @_serialise
     def update(self, hash_prefix: str, permissions: list = None,
                allowed_resources: list = None, policy_id: str = None) -> dict:
         """
@@ -512,11 +574,13 @@ class VaultTokenStore:
         self._tokens: dict = {}
         self._cache_time: float = 0
         self._last_error = None
+        self._needs_reload: bool = False
+        self._lock = threading.RLock()
         self._vault_token = get_vault_application_token(settings)
 
     @property
     def CACHE_TTL(self) -> int:
-        return int(getattr(self.settings, "token_store_cache_ttl", 300) or 300)
+        return _configured_cache_ttl(self.settings)
 
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self._vault_token}"}
@@ -538,6 +602,7 @@ class VaultTokenStore:
             self._last_error = str(exc)
             raise
         self._last_error = None
+        self._needs_reload = False
 
     def _load(self):
         """Charge les tokens depuis MCP Vault.
@@ -602,8 +667,8 @@ class VaultTokenStore:
         self._cache_time = time.time()
 
     def _maybe_refresh(self):
-        """Rafraîchit le cache si le TTL est dépassé."""
-        if time.time() - self._cache_time > self.CACHE_TTL:
+        """Rafraîchit le cache si le TTL est dépassé, ou s'il est douteux."""
+        if time.time() - self._cache_time > self.CACHE_TTL or self._needs_reload:
             self.load()
 
     def get_by_hash(self, token_hash: str) -> Optional[dict]:
@@ -677,6 +742,7 @@ class VaultTokenStore:
         if resp.status_code >= 300:
             raise TokenStoreUnavailable(f"MCP Vault error while saving token store (HTTP {resp.status_code})")
 
+    @_serialise
     def create(self, client_name: str, permissions: list, allowed_resources: list = None,
                expires_in_days: int = 90, email: str = "", policy_id: str = "") -> dict:
         """Crée un nouveau token et le sauvegarde dans MCP Vault."""
@@ -711,6 +777,7 @@ class VaultTokenStore:
 
         return {"raw_token": raw_token, **token_info}
 
+    @_serialise
     def update(self, hash_prefix: str, policy_id: str = None,
                permissions: list = None, allowed_resources: list = None) -> dict:
         """Modifie un token existant dans MCP Vault."""
@@ -759,6 +826,7 @@ class VaultTokenStore:
             "allowed_resources": token.get("allowed_resources", []),
         }
 
+    @_serialise
     def revoke(self, hash_prefix: str) -> bool:
         """Révoque un token par préfixe de hash dans MCP Vault."""
         if len(hash_prefix) < 8:
@@ -772,7 +840,8 @@ class VaultTokenStore:
                 previous_entry = copy.deepcopy(t)
                 t["revoked"] = True
                 t["revoked_at"] = datetime.now(timezone.utc).isoformat()
-                _persist_or_restore(self, h, previous_entry)
+                # Une écriture ratée est ambiguë : garder le refus localement.
+                _persist_or_restore(self, h, previous_entry, keep_on_failure=True)
                 return True
         return False
 
