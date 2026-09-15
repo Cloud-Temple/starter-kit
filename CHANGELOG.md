@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.0.6 — 2026-09-15 — Two defects found while backporting v2.0.5
+
+Both were found by porting the v2.0.5 fix to `mcp-office` and `mcp-agent`, and
+both were in the boilerplate that every derived service copies.
+
+### Fixed
+
+- **`TOKEN_STORE_CACHE_TTL=0` is honoured.** It means "never serve from cache".
+  The fallback `int(...) or 300` turned it silently into 300 seconds, handing an
+  operator back the five-minute revocation window they had just refused. A `0`
+  now stands; an unreadable value still falls back to the default. The S3 store,
+  the Vault store and `get_token_store_status()` share one helper, so the three
+  can no longer drift apart.
+- **The admin API no longer returns the store's error message.** `handle_admin_api`
+  put `str(e)` in the body of its `503`/`502` responses. The admin guard runs
+  *inside* `_dispatch_admin_api`, so during an outage an unauthenticated caller
+  presenting any bearer received the boto3 error, which names the internal S3
+  endpoint and the bucket. The body is now generic; the detail stays on stderr.
+
+### Tests
+
+- `tests/test_token_store_fail_close.py` grows to 27 cases. The mutation table in
+  its docstring is re-measured on the new suite: eight mutations of the fixed
+  code, each caught by at least one test, none silent.
+
 ## v2.0.5 — 2026-09-15 — Token store fails closed
 
 ### Fixed

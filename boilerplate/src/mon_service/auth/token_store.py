@@ -66,6 +66,26 @@ def get_token_store() -> Optional[object]:
     return _token_store
 
 
+_DEFAULT_CACHE_TTL = 300  # secondes
+
+
+def _configured_cache_ttl(settings) -> int:
+    """TTL du cache de tokens, en respectant un `0` explicite.
+
+    Un `0` configuré signifie « ne jamais servir depuis le cache ». Le repli
+    `int(...) or 300` le transformait silencieusement en 300 secondes, et
+    rendait à l'exploitant la fenêtre de révocation de cinq minutes qu'il
+    venait précisément de refuser.
+    """
+    raw = getattr(settings, "token_store_cache_ttl", None)
+    if raw is None or raw == "":
+        return _DEFAULT_CACHE_TTL
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return _DEFAULT_CACHE_TTL
+
+
 def get_token_store_status() -> dict:
     """Return non-sensitive status information about the active token store."""
     settings = get_settings()
@@ -77,7 +97,7 @@ def get_token_store_status() -> dict:
         "configured": False,
         "loaded": store is not None,
         "tokens_count": store.count() if store else 0,
-        "cache_ttl": int(getattr(settings, "token_store_cache_ttl", 300) or 300),
+        "cache_ttl": _configured_cache_ttl(settings),
     }
 
     if store is not None:
@@ -201,7 +221,7 @@ class S3TokenStore:
     - CRUD : create, list, info, revoke
     """
 
-    DEFAULT_CACHE_TTL = 300  # 5 minutes
+    DEFAULT_CACHE_TTL = _DEFAULT_CACHE_TTL
     S3_KEY = "_system/tokens.json"
     BACKOFF_MIN = 1.0   # secondes
     BACKOFF_MAX = 60.0  # secondes
@@ -219,11 +239,7 @@ class S3TokenStore:
     @property
     def CACHE_TTL(self) -> int:
         """TTL du cache, lu dans la configuration et non figé à 300s."""
-        try:
-            return int(getattr(self.settings, "token_store_cache_ttl", self.DEFAULT_CACHE_TTL)
-                       or self.DEFAULT_CACHE_TTL)
-        except (TypeError, ValueError):
-            return self.DEFAULT_CACHE_TTL
+        return _configured_cache_ttl(self.settings)
 
     @property
     def fail_mode(self) -> str:
@@ -516,7 +532,7 @@ class VaultTokenStore:
 
     @property
     def CACHE_TTL(self) -> int:
-        return int(getattr(self.settings, "token_store_cache_ttl", 300) or 300)
+        return _configured_cache_ttl(self.settings)
 
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self._vault_token}"}

@@ -16,6 +16,7 @@ Routes disponibles :
 """
 
 import json
+import sys
 import hmac
 import hashlib
 import platform
@@ -46,11 +47,17 @@ async def handle_admin_api(scope, receive, send, mcp):
     try:
         return await _dispatch_admin_api(scope, receive, send, mcp)
     except TokenStoreUnavailable as e:
+        # Le garde admin vit dans `_dispatch_admin_api` : ce chemin est donc
+        # atteignable par un appelant non authentifié. Le message du magasin
+        # cite l'endpoint et le bucket, il reste sur stderr.
+        print(f"⚠️  API admin : {e}", file=sys.stderr)
         status = 503 if method == "GET" else 502
         return await _json_response(send, status, {
             "status": "error",
             "error": "token_store_unavailable",
-            "message": str(e),
+            "message": ("Magasin de tokens injoignable, lecture impossible."
+                        if status == 503 else
+                        "Magasin de tokens injoignable, aucune modification enregistrée."),
         })
 
 
