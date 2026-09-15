@@ -1,5 +1,45 @@
 # Changelog
 
+## v2.0.5 — 2026-09-15 — Token store fails closed
+
+### Fixed
+
+- **The S3 token store no longer swallows its failures.** `load()` and `_save()`
+  printed a warning and returned. A token creation therefore answered `201` with
+  a `raw_token` that no one had persisted, a revocation reported success without
+  writing anything, and a read failure looked exactly like an empty store, so
+  every token became unknown. Both now raise `TokenStoreUnavailable`.
+- **A read failure no longer refreshes the cache timestamp.** Leaving it untouched
+  is what makes the outage visible to the next caller instead of passing for a
+  successful load of an empty store.
+- **Mutations reload before writing.** Writing from a stale cache overwrote tokens
+  created meanwhile by another instance.
+- **A token whose write failed no longer survives in memory.** It would have been
+  valid on that one instance and unknown to every other.
+
+### Changed
+
+- `TOKEN_STORE_FAIL_MODE` is now actually read. It was declared in `config.py`,
+  documented in the README and the `.env` example, and referenced by no code path.
+  Default stays `fail_close`: past `TOKEN_STORE_STALE_GRACE` (new, 300s), an
+  unreachable store denies access rather than serving a stale cache forever.
+  `fail_open` keeps the old behaviour as an explicit, documented choice.
+- Retries during an outage use an exponential backoff from 1s to 60s, instead of
+  one S3 call per incoming request.
+- An unverifiable access is now HTTP 503, not 401. Not being able to check a
+  credential is not the same as the credential being invalid.
+- Admin API write failures return 502, read failures 503.
+- `VaultTokenStore` raises `TokenStoreUnavailable` instead of a bare `RuntimeError`,
+  so its outages get the same HTTP translation. `TokenStoreUnavailable` subclasses
+  `RuntimeError`, so existing callers and tests are unaffected.
+
+### Known limitation
+
+A `VaultTokenStore` outage still empties the cache and stamps it as fresh, so it
+denies every token for the remainder of the TTL without retrying. That is closed,
+not open, but it deserves the same bounded stale window and backoff as the S3
+store. Tracked separately rather than widened into this fix.
+
 ## v2.0.4 — 2026-09-11 — Agentic rules refresh
 
 ### Changed

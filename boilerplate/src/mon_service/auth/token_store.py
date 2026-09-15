@@ -123,6 +123,14 @@ def init_token_store():
 # S3TokenStore — Stockage S3 + cache mémoire TTL
 # =============================================================================
 
+class TokenStoreUnavailable(RuntimeError):
+    """Le magasin de tokens est injoignable, ou refuse d'écrire.
+
+    Levée plutôt qu'avalée : un magasin muet laisserait croire qu'un token
+    révoqué n'existe pas, ou qu'un token créé a été persisté.
+    """
+
+
 class S3TokenStore:
     """
     Gestion des tokens d'accès MCP.
@@ -134,12 +142,44 @@ class S3TokenStore:
 
     CACHE_TTL = 300  # 5 minutes
     S3_KEY = "_system/tokens.json"
+    BACKOFF_MIN = 1.0   # secondes
+    BACKOFF_MAX = 60.0  # secondes
 
     def __init__(self, settings):
         self.settings = settings
         self._tokens: dict = {}  # hash → token_info
         self._cache_time: float = 0
         self._s3_client = None
+        # Panne en cours : on ne retente pas S3 à chaque requête.
+        self._backoff: float = 0.0
+        self._backoff_until: float = 0.0
+        self._last_error: Optional[str] = None
+
+    @property
+    def fail_mode(self) -> str:
+        """`fail_close` (défaut) ou `fail_open`. Lu à chaud, jamais deviné."""
+        mode = getattr(self.settings, "token_store_fail_mode", "fail_close")
+        return "fail_open" if str(mode).lower() == "fail_open" else "fail_close"
+
+    @property
+    def stale_grace(self) -> int:
+        """Durée pendant laquelle un cache périmé reste servi malgré la panne."""
+        try:
+            return max(0, int(getattr(self.settings, "token_store_stale_grace", 300)))
+        except (TypeError, ValueError):
+            return 300
+
+    def _note_failure(self, error: Exception) -> None:
+        self._last_error = str(error)
+        self._backoff = min(max(self._backoff * 2, self.BACKOFF_MIN), self.BACKOFF_MAX)
+        self._backoff_until = time.time() + self._backoff
+        print(f"⚠️  Token Store S3 : {error} (nouvel essai dans {self._backoff:.0f}s)",
+              file=sys.stderr)
+
+    def _clear_failure(self) -> None:
+        self._backoff = 0.0
+        self._backoff_until = 0.0
+        self._last_error = None
 
     def _get_s3(self):
         """Lazy-load du client S3 boto3.
@@ -169,22 +209,35 @@ class S3TokenStore:
         return self._s3_client
 
     def load(self):
-        """Charge les tokens depuis S3."""
+        """Charge les tokens depuis S3.
+
+        Un objet absent est un magasin vide, pas une panne. Toute autre erreur
+        est levée : le cache et son horodatage restent en l'état, sans quoi une
+        panne se présenterait comme un magasin vide.
+        """
         try:
             s3 = self._get_s3()
             resp = s3.get_object(Bucket=self.settings.s3_bucket_name, Key=self.S3_KEY)
             data = json.loads(resp["Body"].read().decode())
             self._tokens = {t["hash"]: t for t in data.get("tokens", [])}
             self._cache_time = time.time()
+            self._clear_failure()
         except Exception as e:
             if "NoSuchKey" in str(e) or "404" in str(e):
                 self._tokens = {}
                 self._cache_time = time.time()
-            else:
-                print(f"⚠️  Token Store S3 : {e}", file=sys.stderr)
+                self._clear_failure()
+                return
+            self._note_failure(e)
+            raise TokenStoreUnavailable(f"chargement du magasin de tokens impossible : {e}") from e
 
     def _save(self):
-        """Sauvegarde les tokens sur S3."""
+        """Sauvegarde les tokens sur S3.
+
+        Un échec est levé : sans cela, un token créé serait rendu à l'appelant
+        alors qu'il n'existe nulle part, et une révocation serait annoncée sans
+        avoir été écrite.
+        """
         try:
             s3 = self._get_s3()
             data = json.dumps(
@@ -197,13 +250,39 @@ class S3TokenStore:
                 Body=data.encode(),
                 ContentType="application/json",
             )
+            self._clear_failure()
         except Exception as e:
-            print(f"⚠️  Token Store S3 save : {e}", file=sys.stderr)
+            self._note_failure(e)
+            raise TokenStoreUnavailable(f"écriture du magasin de tokens impossible : {e}") from e
 
     def _maybe_refresh(self):
-        """Rafraîchit le cache si le TTL est dépassé."""
-        if time.time() - self._cache_time > self.CACHE_TTL:
+        """Rafraîchit le cache si le TTL est dépassé.
+
+        Pendant une panne, le cache périmé reste servi le temps de la fenêtre
+        `TOKEN_STORE_STALE_GRACE`, puis l'accès est refusé. Le mode
+        `TOKEN_STORE_FAIL_MODE=fail_open` lève cette limite, au prix explicite
+        de révocations ignorées tant que la panne dure.
+        """
+        age = time.time() - self._cache_time
+        if age <= self.CACHE_TTL:
+            return
+        if time.time() < self._backoff_until:
+            return self._guard_stale(age)
+        try:
             self.load()
+        except TokenStoreUnavailable:
+            self._guard_stale(time.time() - self._cache_time)
+
+    def _guard_stale(self, age: float) -> None:
+        if self.fail_mode == "fail_open":
+            return
+        if age <= self.CACHE_TTL + self.stale_grace:
+            return
+        raise TokenStoreUnavailable(
+            f"magasin de tokens injoignable depuis {age:.0f}s, "
+            f"au-delà de la fenêtre de {self.stale_grace}s : accès refusé "
+            f"({self._last_error or 'cause inconnue'})"
+        )
 
     def get_by_hash(self, token_hash: str) -> Optional[dict]:
         """Cherche un token par son hash SHA-256. Vérifie l'expiration."""
@@ -248,8 +327,17 @@ class S3TokenStore:
             "revoked": False,
         }
 
+        # Recharger avant de muter : écrire depuis un cache périmé écraserait
+        # les tokens créés entre-temps par une autre instance.
+        self.load()
         self._tokens[token_hash] = token_info
-        self._save()
+        try:
+            self._save()
+        except TokenStoreUnavailable:
+            # Ne pas garder en mémoire un token que le magasin n'a pas accepté :
+            # il serait valide sur cette instance et inconnu de toutes les autres.
+            self._tokens.pop(token_hash, None)
+            raise
 
         return {"raw_token": raw_token, **token_info}
 
@@ -275,6 +363,7 @@ class S3TokenStore:
         # avec un préfixe trop court (collision de hash).
         if len(hash_prefix) < 8:
             return False
+        self.load()
         for h, t in self._tokens.items():
             if h.startswith(hash_prefix):
                 t["revoked"] = True
@@ -296,6 +385,7 @@ class S3TokenStore:
         if len(hash_prefix) < 8:
             return {"status": "error", "message": "Hash prefix trop court (min 8 caractères)"}
 
+        self.load()
         for h, t in self._tokens.items():
             if h.startswith(hash_prefix):
                 updated_fields = []
@@ -385,11 +475,11 @@ class VaultTokenStore:
         except httpx.TimeoutException as exc:
             self._tokens = {}
             self._cache_time = time.time()
-            raise RuntimeError("MCP Vault unavailable: timeout while loading token store") from exc
+            raise TokenStoreUnavailable("MCP Vault unavailable: timeout while loading token store") from exc
         except httpx.HTTPError as exc:
             self._tokens = {}
             self._cache_time = time.time()
-            raise RuntimeError(f"MCP Vault unavailable while loading token store: {exc}") from exc
+            raise TokenStoreUnavailable(f"MCP Vault unavailable while loading token store: {exc}") from exc
 
         if resp.status_code == 404:
             self._tokens = {}
@@ -399,17 +489,17 @@ class VaultTokenStore:
         if resp.status_code in (401, 403):
             self._tokens = {}
             self._cache_time = time.time()
-            raise RuntimeError(f"MCP Vault permission denied while loading token store (HTTP {resp.status_code})")
+            raise TokenStoreUnavailable(f"MCP Vault permission denied while loading token store (HTTP {resp.status_code})")
 
         if resp.status_code >= 500:
             self._tokens = {}
             self._cache_time = time.time()
-            raise RuntimeError(f"MCP Vault unavailable while loading token store (HTTP {resp.status_code})")
+            raise TokenStoreUnavailable(f"MCP Vault unavailable while loading token store (HTTP {resp.status_code})")
 
         if resp.status_code >= 300:
             self._tokens = {}
             self._cache_time = time.time()
-            raise RuntimeError(f"MCP Vault error while loading token store (HTTP {resp.status_code})")
+            raise TokenStoreUnavailable(f"MCP Vault error while loading token store (HTTP {resp.status_code})")
 
         payload = resp.json()
         data = payload.get("data", {}) if isinstance(payload, dict) else {}
@@ -417,7 +507,7 @@ class VaultTokenStore:
         if tokens is None:
             tokens = []
         if not isinstance(tokens, list):
-            raise RuntimeError("MCP Vault token store payload is invalid: data.tokens must be a list")
+            raise TokenStoreUnavailable("MCP Vault token store payload is invalid: data.tokens must be a list")
 
         self._tokens = {t["hash"]: t for t in tokens if isinstance(t, dict) and "hash" in t}
         self._cache_time = time.time()
@@ -478,16 +568,16 @@ class VaultTokenStore:
                 timeout=float(getattr(self.settings, "mcp_vault_timeout", 5.0) or 5.0),
             )
         except httpx.TimeoutException as exc:
-            raise RuntimeError("MCP Vault unavailable: timeout while saving token store") from exc
+            raise TokenStoreUnavailable("MCP Vault unavailable: timeout while saving token store") from exc
         except httpx.HTTPError as exc:
-            raise RuntimeError(f"MCP Vault unavailable while saving token store: {exc}") from exc
+            raise TokenStoreUnavailable(f"MCP Vault unavailable while saving token store: {exc}") from exc
 
         if resp.status_code in (401, 403):
-            raise RuntimeError(f"MCP Vault permission denied while saving token store (HTTP {resp.status_code})")
+            raise TokenStoreUnavailable(f"MCP Vault permission denied while saving token store (HTTP {resp.status_code})")
         if resp.status_code >= 500:
-            raise RuntimeError(f"MCP Vault unavailable while saving token store (HTTP {resp.status_code})")
+            raise TokenStoreUnavailable(f"MCP Vault unavailable while saving token store (HTTP {resp.status_code})")
         if resp.status_code >= 300:
-            raise RuntimeError(f"MCP Vault error while saving token store (HTTP {resp.status_code})")
+            raise TokenStoreUnavailable(f"MCP Vault error while saving token store (HTTP {resp.status_code})")
 
     def create(self, client_name: str, permissions: list, allowed_resources: list = None,
                expires_in_days: int = 90, email: str = "", policy_id: str = "") -> dict:
