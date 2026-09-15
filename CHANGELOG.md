@@ -32,6 +32,37 @@ is the one that stings: the suite claimed to cover a behaviour it never touched.
   copy of a mutation counter before its `GET` and discards a body that has become
   stale, marking the cache for revalidation.
 
+### Fixed after the independent review
+
+The reviewer refused the first version. It was right to.
+
+- **The Vault backend never got the race fix.** The first version declared
+  `_mutation_seq` in `VaultTokenStore.__init__` and never used it in `_load()`.
+  The attribute existed only to stop `_serialise` raising `AttributeError`. Vault
+  is a supported production backend, so it stayed open to the exact defect this
+  work claims to close, with the appearance of a protection that was not there.
+  Both backends now go through one shared helper, because two copies of the same
+  invariant is how this defect happened in the first place.
+- **`VaultTokenStore.load()` cleared `_needs_reload` unconditionally** after a
+  successful `_load()`, erasing the flag the helper had just set when it
+  discarded a stale body. Found by the new Vault race test, not by reading.
+- **A test claimed to prove the `503` and proved nothing.** It was called "the
+  health check stays green during an outage", but `/health` is in `PUBLIC_PATHS`,
+  so the middleware returns before `_validate_token` and the fake outage could
+  never fire. It stayed green with or without the fix. Rewritten around the
+  property that is real and worth protecting: a public path never consults the
+  store at all.
+- **The race tests could hang CI instead of failing.** The call to `revoke()`
+  had no bound. `pytest-timeout` is not installed and the CI jobs have no
+  `timeout-minutes`, so a regression making the lock non-reentrant would have
+  burned the GitHub default of six hours. Both race tests now fail in ten
+  seconds instead.
+- **`TOKEN_STORE_CACHE_TTL=0` also closes the admin console** during an outage,
+  because `_guard_stale` serves `list_all` as well as `get_by_hash`. Only the
+  bootstrap key still gets in. The behaviour is consistent with fail-close and is
+  kept, but it was undocumented. Now stated in the README and `.env.example`, and
+  pinned by a test.
+
 ### Changed
 
 - The documented limit was wrong. "The lock only serialises this process"

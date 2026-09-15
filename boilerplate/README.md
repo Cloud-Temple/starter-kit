@@ -443,7 +443,7 @@ traduit en réponse HTTP. Le tableau ci-dessous décrit le **backend S3**.
 | --- | --- |
 | Objet de tokens absent | Magasin vide, pas une panne. |
 | Lecture en échec, cache plus jeune que `TOKEN_STORE_CACHE_TTL` | Le cache est servi, rien n'est tenté. |
-| `TOKEN_STORE_CACHE_TTL=0` | Aucun service depuis le cache : chaque vérification recharge, et la panne est immédiatement visible. |
+| `TOKEN_STORE_CACHE_TTL=0` | Aucun service depuis le cache : chaque vérification recharge, et la panne est immédiatement visible. `TOKEN_STORE_STALE_GRACE` est court-circuité. Le refus vaut aussi pour la console d'administration : pendant une panne, seule la clé bootstrap y donne encore accès. |
 | Lecture en échec, cache périmé depuis moins de `TOKEN_STORE_STALE_GRACE` | Le cache périmé est servi, la panne est journalisée. |
 | Lecture en échec au-delà de cette fenêtre, `fail_close` | Accès refusé, HTTP 503. Une révocation ne peut pas être ignorée indéfiniment. |
 | Lecture en échec au-delà de cette fenêtre, `fail_open` | Le cache périmé reste servi. Choix explicite, révocations ignorées pendant la panne. |

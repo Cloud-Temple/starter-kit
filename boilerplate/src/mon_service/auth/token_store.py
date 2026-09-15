@@ -250,6 +250,24 @@ class TokenStoreUnavailable(RuntimeError):
     """
 
 
+def _appliquer_si_pas_perime(store, seq: int, tokens: dict) -> None:
+    """Remplace le cache, sauf si une mutation locale a abouti pendant l'I/O.
+
+    `seq` est la valeur de `_mutation_seq` relevée avant l'appel réseau. Si elle
+    a bougé, le corps que nous tenons est antérieur à cette mutation : l'appliquer
+    rendrait au cache un token qu'on vient de révoquer, avec un horodatage neuf
+    par-dessus le marché. On marque alors le cache à revalider plutôt que de le
+    remplacer par une vérité périmée.
+    """
+    with store._lock:
+        if store._mutation_seq != seq:
+            store._needs_reload = True
+            return
+        store._tokens = tokens
+        store._cache_time = time.time()
+        store._needs_reload = False
+
+
 class S3TokenStore:
     """
     Gestion des tokens d'accès MCP.
@@ -355,25 +373,12 @@ class S3TokenStore:
             seq = self._mutation_seq
             resp = s3.get_object(Bucket=self.settings.s3_bucket_name, Key=self.S3_KEY)
             data = json.loads(resp["Body"].read().decode())
-            with self._lock:
-                if self._mutation_seq != seq:
-                    # Une mutation locale a abouti pendant ce GET. Le corps que
-                    # nous tenons lui est antérieur : l'appliquer rendrait au
-                    # cache un token qu'on vient de révoquer, et lui donnerait
-                    # en prime un TTL tout neuf. Le verrou des mutations ne
-                    # protège pas de ça, la lecture se fait hors verrou.
-                    self._needs_reload = True
-                else:
-                    self._tokens = {t["hash"]: t for t in data.get("tokens", [])}
-                    self._cache_time = time.time()
-                    self._needs_reload = False
+            _appliquer_si_pas_perime(
+                self, seq, {t["hash"]: t for t in data.get("tokens", [])})
             self._clear_failure()
         except Exception as e:
             if _is_missing_object(e):
-                with self._lock:
-                    self._tokens = {}
-                    self._cache_time = time.time()
-                    self._needs_reload = False
+                _appliquer_si_pas_perime(self, seq, {})
                 self._clear_failure()
                 return
             self._note_failure(e)
@@ -632,8 +637,11 @@ class VaultTokenStore:
         except TokenStoreUnavailable as exc:
             self._last_error = str(exc)
             raise
+        # `_needs_reload` appartient à `_appliquer_si_pas_perime` : il le baisse
+        # quand le corps chargé fait foi, et le lève quand il a dû le jeter
+        # parce qu'une mutation locale était passée entre-temps. Le remettre à
+        # faux ici effaçait ce marquage, donc la course qu'on vient de détecter.
         self._last_error = None
-        self._needs_reload = False
 
     def _load(self):
         """Charge les tokens depuis MCP Vault.
@@ -645,45 +653,39 @@ class VaultTokenStore:
         import httpx
 
         try:
+            seq = self._mutation_seq
             resp = httpx.get(
                 self._secret_url(),
                 headers=self._headers(),
                 timeout=float(getattr(self.settings, "mcp_vault_timeout", 5.0) or 5.0),
             )
         except httpx.TimeoutException as exc:
-            self._tokens = {}
-            self._cache_time = time.time()
+            _appliquer_si_pas_perime(self, seq, {})
             raise TokenStoreUnavailable("MCP Vault unavailable: timeout while loading token store") from exc
         except httpx.HTTPError as exc:
-            self._tokens = {}
-            self._cache_time = time.time()
+            _appliquer_si_pas_perime(self, seq, {})
             raise TokenStoreUnavailable(f"MCP Vault unavailable while loading token store: {exc}") from exc
 
         if resp.status_code == 404:
-            self._tokens = {}
-            self._cache_time = time.time()
+            _appliquer_si_pas_perime(self, seq, {})
             return
 
         if resp.status_code in (401, 403):
-            self._tokens = {}
-            self._cache_time = time.time()
+            _appliquer_si_pas_perime(self, seq, {})
             raise TokenStoreUnavailable(f"MCP Vault permission denied while loading token store (HTTP {resp.status_code})")
 
         if resp.status_code >= 500:
-            self._tokens = {}
-            self._cache_time = time.time()
+            _appliquer_si_pas_perime(self, seq, {})
             raise TokenStoreUnavailable(f"MCP Vault unavailable while loading token store (HTTP {resp.status_code})")
 
         if resp.status_code >= 300:
-            self._tokens = {}
-            self._cache_time = time.time()
+            _appliquer_si_pas_perime(self, seq, {})
             raise TokenStoreUnavailable(f"MCP Vault error while loading token store (HTTP {resp.status_code})")
 
         try:
             payload = resp.json()
         except ValueError as exc:
-            self._tokens = {}
-            self._cache_time = time.time()
+            _appliquer_si_pas_perime(self, seq, {})
             raise TokenStoreUnavailable(
                 f"MCP Vault token store payload is not valid JSON: {exc}"
             ) from exc
@@ -694,8 +696,10 @@ class VaultTokenStore:
         if not isinstance(tokens, list):
             raise TokenStoreUnavailable("MCP Vault token store payload is invalid: data.tokens must be a list")
 
-        self._tokens = {t["hash"]: t for t in tokens if isinstance(t, dict) and "hash" in t}
-        self._cache_time = time.time()
+        _appliquer_si_pas_perime(
+            self, seq,
+            {t["hash"]: t for t in tokens if isinstance(t, dict) and "hash" in t},
+        )
 
     def _maybe_refresh(self):
         """Rafraîchit le cache si le TTL est dépassé, ou s'il est douteux."""
