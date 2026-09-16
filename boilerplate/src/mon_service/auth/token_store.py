@@ -199,7 +199,13 @@ def _serialise(method):
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         with self._lock:
-            return method(self, *args, **kwargs)
+            try:
+                return method(self, *args, **kwargs)
+            finally:
+                # Incrémenté même en cas d'échec : une écriture ratée est
+                # ambiguë, elle a pu aboutir côté magasin. Une lecture en vol
+                # ne doit pas davantage écraser cet état-là.
+                self._mutation_seq += 1
     return wrapper
 
 
@@ -244,6 +250,24 @@ class TokenStoreUnavailable(RuntimeError):
     """
 
 
+def _appliquer_si_pas_perime(store, seq: int, tokens: dict) -> None:
+    """Remplace le cache, sauf si une mutation locale a abouti pendant l'I/O.
+
+    `seq` est la valeur de `_mutation_seq` relevée avant l'appel réseau. Si elle
+    a bougé, le corps que nous tenons est antérieur à cette mutation : l'appliquer
+    rendrait au cache un token qu'on vient de révoquer, avec un horodatage neuf
+    par-dessus le marché. On marque alors le cache à revalider plutôt que de le
+    remplacer par une vérité périmée.
+    """
+    with store._lock:
+        if store._mutation_seq != seq:
+            store._needs_reload = True
+            return
+        store._tokens = tokens
+        store._cache_time = time.time()
+        store._needs_reload = False
+
+
 class S3TokenStore:
     """
     Gestion des tokens d'accès MCP.
@@ -273,7 +297,18 @@ class S3TokenStore:
         # Une mutation est un lire-modifier-écrire : la sérialiser évite qu'une
         # lecture concurrente remplace `_tokens` entre le rechargement et
         # l'écriture. Ne dit rien des autres instances.
+        #
+        # RLock et pas Lock, et ce n'est pas une préférence. `_serialise` prend
+        # ce verrou, la mutation qu'il enveloppe appelle `load()`, et `load()`
+        # le reprend via `_appliquer_si_pas_perime`. Un verrou non réentrant
+        # interbloquerait le fil appelant contre lui-même dès la première
+        # création de token. `test_le_verrou_des_mutations_doit_rester_reentrant`
+        # garde cette exigence.
         self._lock = threading.RLock()
+        # Compte les mutations locales abouties. `load()` en prend copie avant
+        # son GET : si le compte a bougé quand la réponse arrive, ce corps est
+        # antérieur à la mutation et l'appliquer l'effacerait.
+        self._mutation_seq: int = 0
 
     @property
     def CACHE_TTL(self) -> int:
@@ -342,19 +377,15 @@ class S3TokenStore:
         """
         try:
             s3 = self._get_s3()
+            seq = self._mutation_seq
             resp = s3.get_object(Bucket=self.settings.s3_bucket_name, Key=self.S3_KEY)
             data = json.loads(resp["Body"].read().decode())
-            with self._lock:
-                self._tokens = {t["hash"]: t for t in data.get("tokens", [])}
-                self._cache_time = time.time()
-                self._needs_reload = False
+            _appliquer_si_pas_perime(
+                self, seq, {t["hash"]: t for t in data.get("tokens", [])})
             self._clear_failure()
         except Exception as e:
             if _is_missing_object(e):
-                with self._lock:
-                    self._tokens = {}
-                    self._cache_time = time.time()
-                    self._needs_reload = False
+                _appliquer_si_pas_perime(self, seq, {})
                 self._clear_failure()
                 return
             self._note_failure(e)
@@ -402,6 +433,23 @@ class S3TokenStore:
             self._guard_stale(time.time() - self._cache_time)
 
     def _guard_stale(self, age: float) -> None:
+        if self.CACHE_TTL == 0:
+            # Testé AVANT `fail_open`, et l'ordre est le fond du sujet. Les deux
+            # réglages se contredisent : `fail_open` accepte un cache périmé
+            # pendant la panne, un TTL nul refuse tout cache. Quand un exploitant
+            # écrit les deux, on retient le plus restrictif, comme partout
+            # ailleurs dans ce fichier. L'ordre inverse laissait `fail_open`
+            # rouvrir la fenêtre et rendait fausse la promesse du README.
+            #
+            # Un TTL nul est un refus explicite de servir depuis le cache.
+            # Laisser la grâce rouvrir une fenêtre de cinq minutes rendrait à
+            # l'exploitant exactement ce qu'il vient de refuser, par une autre
+            # porte que le repli `int(...) or 300` déjà corrigé.
+            raise TokenStoreUnavailable(
+                "magasin de tokens injoignable et TOKEN_STORE_CACHE_TTL=0 "
+                "interdit de servir depuis le cache : accès refusé "
+                f"({self._last_error or 'cause inconnue'})"
+            )
         if self.fail_mode == "fail_open":
             return
         if age <= self.CACHE_TTL + self.stale_grace:
@@ -575,7 +623,11 @@ class VaultTokenStore:
         self._cache_time: float = 0
         self._last_error = None
         self._needs_reload: bool = False
+        # RLock pour la même raison que côté S3, voir le commentaire là-bas :
+        # `_serialise` détient le verrou quand `load()` le reprend.
         self._lock = threading.RLock()
+        # Même rôle que côté S3 : `_serialise` l'incrémente à chaque mutation.
+        self._mutation_seq: int = 0
         self._vault_token = get_vault_application_token(settings)
 
     @property
@@ -601,58 +653,58 @@ class VaultTokenStore:
         except TokenStoreUnavailable as exc:
             self._last_error = str(exc)
             raise
+        # `_needs_reload` appartient à `_appliquer_si_pas_perime` : il le baisse
+        # quand le corps chargé fait foi, et le lève quand il a dû le jeter
+        # parce qu'une mutation locale était passée entre-temps. Le remettre à
+        # faux ici effaçait ce marquage, donc la course qu'on vient de détecter.
         self._last_error = None
-        self._needs_reload = False
 
     def _load(self):
-        """Charge les tokens depuis MCP Vault.
+        """Charge depuis MCP Vault sans jamais présenter une panne comme un vide.
 
-        - 404 => store vide
-        - 401/403 => erreur permission/auth claire
-        - 5xx/timeout => erreur Vault indisponible
+        Les branches qui lèvent laissent `_tokens` et `_cache_time` intacts. Les
+        vider et rafraîchir l'horodatage rendait la panne invisible dès la
+        requête suivante : le cache paraissait frais et vide, `get_by_hash`
+        rendait `None` sans lever, et `AuthMiddleware` laissait alors passer la
+        requête avec `token_info=None`. Ce n'était donc pas « un 401 au lieu
+        d'un 503 » comme je l'avais écrit, mais un fail-open dont la seule
+        barrière restante était la discipline de chaque outil.
+
+        Sorties :
+        - 404 : le secret n'existe pas, le magasin est vraiment vide
+        - 401/403 : erreur de permission, le magasin reste invérifiable
+        - 3xx, 5xx, timeout, corps illisible : Vault est indisponible
         """
         import httpx
 
         try:
+            seq = self._mutation_seq
             resp = httpx.get(
                 self._secret_url(),
                 headers=self._headers(),
                 timeout=float(getattr(self.settings, "mcp_vault_timeout", 5.0) or 5.0),
             )
         except httpx.TimeoutException as exc:
-            self._tokens = {}
-            self._cache_time = time.time()
             raise TokenStoreUnavailable("MCP Vault unavailable: timeout while loading token store") from exc
         except httpx.HTTPError as exc:
-            self._tokens = {}
-            self._cache_time = time.time()
             raise TokenStoreUnavailable(f"MCP Vault unavailable while loading token store: {exc}") from exc
 
         if resp.status_code == 404:
-            self._tokens = {}
-            self._cache_time = time.time()
+            _appliquer_si_pas_perime(self, seq, {})
             return
 
         if resp.status_code in (401, 403):
-            self._tokens = {}
-            self._cache_time = time.time()
             raise TokenStoreUnavailable(f"MCP Vault permission denied while loading token store (HTTP {resp.status_code})")
 
         if resp.status_code >= 500:
-            self._tokens = {}
-            self._cache_time = time.time()
             raise TokenStoreUnavailable(f"MCP Vault unavailable while loading token store (HTTP {resp.status_code})")
 
         if resp.status_code >= 300:
-            self._tokens = {}
-            self._cache_time = time.time()
             raise TokenStoreUnavailable(f"MCP Vault error while loading token store (HTTP {resp.status_code})")
 
         try:
             payload = resp.json()
         except ValueError as exc:
-            self._tokens = {}
-            self._cache_time = time.time()
             raise TokenStoreUnavailable(
                 f"MCP Vault token store payload is not valid JSON: {exc}"
             ) from exc
@@ -663,8 +715,10 @@ class VaultTokenStore:
         if not isinstance(tokens, list):
             raise TokenStoreUnavailable("MCP Vault token store payload is invalid: data.tokens must be a list")
 
-        self._tokens = {t["hash"]: t for t in tokens if isinstance(t, dict) and "hash" in t}
-        self._cache_time = time.time()
+        _appliquer_si_pas_perime(
+            self, seq,
+            {t["hash"]: t for t in tokens if isinstance(t, dict) and "hash" in t},
+        )
 
     def _maybe_refresh(self):
         """Rafraîchit le cache si le TTL est dépassé, ou s'il est douteux."""

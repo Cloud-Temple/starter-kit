@@ -443,7 +443,7 @@ traduit en réponse HTTP. Le tableau ci-dessous décrit le **backend S3**.
 | --- | --- |
 | Objet de tokens absent | Magasin vide, pas une panne. |
 | Lecture en échec, cache plus jeune que `TOKEN_STORE_CACHE_TTL` | Le cache est servi, rien n'est tenté. |
-| `TOKEN_STORE_CACHE_TTL=0` | Aucun service depuis le cache : chaque vérification recharge, et la panne est immédiatement visible. |
+| `TOKEN_STORE_CACHE_TTL=0` | Aucun service depuis le cache : chaque vérification recharge, et la panne est immédiatement visible. `TOKEN_STORE_STALE_GRACE` est court-circuité. Le refus vaut aussi pour la console d'administration : pendant une panne, seule la clé bootstrap y donne encore accès. |
 | Lecture en échec, cache périmé depuis moins de `TOKEN_STORE_STALE_GRACE` | Le cache périmé est servi, la panne est journalisée. |
 | Lecture en échec au-delà de cette fenêtre, `fail_close` | Accès refusé, HTTP 503. Une révocation ne peut pas être ignorée indéfiniment. |
 | Lecture en échec au-delà de cette fenêtre, `fail_open` | Le cache périmé reste servi. Choix explicite, révocations ignorées pendant la panne. |
@@ -452,9 +452,21 @@ traduit en réponse HTTP. Le tableau ci-dessous décrit le **backend S3**.
 Pendant une panne, les tentatives sont espacées par un backoff exponentiel
 d'une à soixante secondes, au lieu d'un appel S3 par requête entrante.
 
-Le backend Vault refuse l'accès dès la première panne, sans fenêtre de cache
-périmé ni backoff : il ne lit pas `TOKEN_STORE_FAIL_MODE` ni
-`TOKEN_STORE_STALE_GRACE`. Il refuse donc davantage que S3, jamais moins.
+Le backend Vault n'a ni fenêtre de cache périmé ni backoff : il ne lit pas
+`TOKEN_STORE_FAIL_MODE` ni `TOKEN_STORE_STALE_GRACE`. Dès que son TTL est
+dépassé et que le rechargement échoue, il refuse. Il refuse donc davantage que
+S3, jamais moins.
+
+Passé la première requête, il garde son cache et son horodatage au lieu de les
+effacer. Dans le TTL, la requête suivante est donc servie depuis ce cache,
+comme en fonctionnement normal. Au-delà, le rechargement échoue et la levée
+remonte : 503. Jamais 401 sur une panne.
+
+Jusqu'à la v2.0.7 il faisait l'inverse : chaque erreur de chargement vidait le
+cache et rafraîchissait son horodatage, si bien que les requêtes suivantes
+voyaient un cache jugé frais et vide, donc un token inconnu, donc un 401
+pendant tout le TTL. Un client bien élevé en concluait que son token était
+invalide et le remplaçait, sur une simple panne réseau.
 
 Dans les deux cas, une panne du magasin n'empêche pas le service de démarrer :
 `/health`, la console d'administration et la clé bootstrap restent disponibles

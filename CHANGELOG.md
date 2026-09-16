@@ -1,5 +1,121 @@
 # Changelog
 
+## v2.0.7 — 2026-09-15 — What the counter-review found in v2.0.6
+
+An adversarial review of the v2.0.6 backports turned up three defects. The first
+is the one that stings: the suite claimed to cover a behaviour it never touched.
+
+### Fixed
+
+- **The middleware's `503` was never tested.** Removing the whole
+  `except TokenStoreUnavailable` from `AuthMiddleware` left all 128 tests green,
+  in every repository of the fleet. The CHANGELOG entries and pull request
+  descriptions for v2.0.5 and v2.0.6 claimed otherwise. Six tests now cover the
+  refusal itself: `503` and not `401`, the downstream app never runs, the store's
+  message stays out of the body, `Retry-After` is set, a websocket is closed with
+  1013, and the contextvar does not leak. Three more pin the behaviours around it
+  that must not change: a public path never consults the store, anonymous traffic
+  still passes, and a valid token still passes.
+- **`TOKEN_STORE_CACHE_TTL=0` no longer serves the cache for five minutes.**
+  A null TTL forced a reload, but when that reload failed `_guard_stale` still
+  allowed the cache for `0 + TOKEN_STORE_STALE_GRACE`, which defaults to 300
+  seconds. It handed back the revocation window the operator had just refused,
+  through a second door, after v2.0.6 had closed the first. A null TTL now
+  short-circuits the grace window. The test that should have caught this set
+  `token_store_stale_grace=0` as well, so it exercised a configuration nobody
+  writes.
+- **A read in flight could erase a revocation that had already been written.**
+  `load()` performs its `GET` outside the lock and only takes it to overwrite
+  `_tokens`. A read that started before a revocation could return after it,
+  reinject the unrevoked version and give it a fresh TTL, so the revoked token
+  stayed valid on that instance for the length of the cache. `load()` now takes a
+  copy of a mutation counter before its `GET` and discards a body that has become
+  stale, marking the cache for revalidation.
+
+### Fixed after the independent review
+
+The reviewer refused the first version. It was right to.
+
+- **The Vault backend never got the race fix.** The first version declared
+  `_mutation_seq` in `VaultTokenStore.__init__` and never used it in `_load()`.
+  The attribute existed only to stop `_serialise` raising `AttributeError`. Vault
+  is a supported production backend, so it stayed open to the exact defect this
+  work claims to close, with the appearance of a protection that was not there.
+  Both backends now go through one shared helper, because two copies of the same
+  invariant is how this defect happened in the first place.
+- **`VaultTokenStore.load()` cleared `_needs_reload` unconditionally** after a
+  successful `_load()`, erasing the flag the helper had just set when it
+  discarded a stale body. Found by the new Vault race test, not by reading.
+- **A test claimed to prove the `503` and proved nothing.** It was called "the
+  health check stays green during an outage", but `/health` is in `PUBLIC_PATHS`,
+  so the middleware returns before `_validate_token` and the fake outage could
+  never fire. It stayed green with or without the fix. Rewritten around the
+  property that is real and worth protecting: a public path never consults the
+  store at all.
+- **The race tests could hang CI instead of failing.** The call to `revoke()`
+  had no bound, so a regression making the lock non-reentrant would have burned
+  the GitHub default of six hours. The reader threads are now daemons and the
+  bound is honoured. This is a partial answer, and the next section says why.
+- **`TOKEN_STORE_CACHE_TTL=0` also closes the admin console** during an outage,
+  because `_guard_stale` serves `list_all` as well as `get_by_hash`. Only the
+  bootstrap key still gets in. The behaviour is consistent with fail-close and is
+  kept, but it was undocumented. Now stated in the README and `.env.example`, and
+  pinned by a test.
+
+### Fixed after the second independent review
+
+The second reviewer took the bound above apart. It was right too.
+
+- **The bound was in the wrong place.** Making the reader threads daemons only
+  covers threads the test file creates. The deadlock a non-reentrant lock
+  produces is on the thread running pytest: `_serialise` takes `_lock`, the
+  mutation calls `load()`, and `load()` takes it again through the shared
+  helper. Measured, replacing `RLock` with `Lock` hangs
+  `test_une_creation_dont_l_ecriture_echoue_n_expose_aucun_token`, which creates
+  a token and touches no thread at all. The claim that both
+  race tests fail in ten seconds was true in isolation and false for the suite.
+  Two things fix it. A test now asserts the lock is reentrant, using
+  `acquire(timeout=1)`, so the regression is a red in one second instead of a
+  hang, and it is placed first in the file so it is the first thing that fails.
+  And `pytest.ini` sets `timeout = 60` with `timeout_method = thread`, which
+  prints every thread's stack and kills the process. `signal` was tried first
+  and does not interrupt a blocked `acquire()` here; that was measured, not
+  assumed. The three CI jobs also get `timeout-minutes: 20`, ten times their
+  real duration, for what pytest cannot see: a `pip install` or a
+  `docker compose` that never returns.
+- **The Vault store still wiped its cache on a read failure.** Every error path
+  in `_load()` replaced `_tokens` with `{}` and refreshed `_cache_time` before
+  raising, so an outage presented itself as an empty store and the bounded stale
+  window had nothing left to serve. It was listed as a known limitation and
+  tracked in issue #30; it belongs here instead, because this release is the one
+  that claims the store fails closed rather than lying. The five error paths now
+  leave the cache alone, and the `404`, where the secret really is gone, still
+  clears it. Six tests, one per path.
+- **The mutation harness was producing numbers it had not measured.** Two
+  separate flaws. It inserted a malformed line into the source, collection
+  failed, pytest reported one error, and the counter read that as one test
+  detecting the mutation. And it left stale bytecode behind: CPython validates a
+  `.pyc` on the pair (mtime in whole seconds, size), so two mutations inserting
+  the same line into two different branches produce files of identical size, and
+  the second run reused the first one's bytecode. The same mutation measured 1
+  red on one run and 2 on the next. The harness now parses the mutated source
+  before running anything, purges `__pycache__`, and runs with `python -B`. Two
+  consecutive measurements are now identical: 30 mutations, 53 tests, none
+  undetected.
+
+### Changed
+
+- The documented limit was wrong. "The lock only serialises this process"
+  suggested everything inside one process was safe. It serialises mutations
+  against each other, nothing more. The docstring now says so, and names the
+  generation counter as what protects reads.
+
+### Known limitations, unchanged
+
+- No conditional write on the store side, so two instances can still overwrite
+  each other. See issue #28.
+
+
 ## v2.0.6 — 2026-09-15 — Two defects found while backporting v2.0.5
 
 Both were found by porting the v2.0.5 fix to `mcp-office` and `mcp-agent`, and
