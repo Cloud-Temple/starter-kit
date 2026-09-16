@@ -11,38 +11,61 @@ Une écriture qui échoue est ambiguë : le magasin a pu l'appliquer et perdre s
 réponse en route. La règle retenue est de garder localement l'état le plus
 restrictif, et de marquer le cache à revalider.
 
-Preuves par mutation, mesurées sur ces 43 tests. Chaque défaut est réintroduit
+Preuves par mutation, mesurées sur ces 53 tests. Chaque défaut est réintroduit
 par une modification précise, et la suite tombe ainsi :
 
     mutation appliquée au code corrigé                          rouges
     ---------------------------------------------------------   ------
-    `_persist_or_restore` n'annule rien et ne marque rien      7/43
-    `load()` ravale sa levée, l'avalement d'origine            7/43
-    `_save()` ravale sa levée                                  6/43
-    le middleware n'attrape plus TokenStoreUnavailable         6/43
-    `handle_admin_api` n'attrape plus TokenStoreUnavailable    4/43
-    `_guard_stale` ne lève jamais                              4/43
-    le refus du middleware laisse tourner l'app en aval        3/43
-    une révocation ratée est annulée en mémoire                3/43
-    une écriture douteuse ne marque plus le cache              3/43
-    `CACHE_TTL` replie un `0` configuré sur 300                3/43
-    un `TTL=0` laisse la grâce rouvrir la fenêtre              2/43
-    le compteur de génération est ignoré (S3 et Vault)         2/43
-    `_serialise` n'incrémente plus le compteur                 2/43
-    l'API admin rend de nouveau `str(e)` dans le corps         2/43
-    `_is_missing_object` accepte de nouveau un statut 404 nu   2/43
-    le wrapper Vault rebaisse `_needs_reload`                  1/43
-    le 503 du middleware republie le message du magasin        1/43
-    le refus du middleware redevient un 401                    1/43
-    le 503 du middleware ne dit plus quand réessayer           1/43
-    un websocket invérifiable est accepté                      1/43
-    les routes publiques ne court-circuitent plus l'auth       1/43
-    `_maybe_refresh` ignore le drapeau de revalidation         1/43
-    les mutations ne sont plus sérialisées                     1/43
+    `load()` ravale sa levée, l'avalement d'origine            7/53
+    `_persist_or_restore` n'annule rien et ne marque rien      7/53
+    `_save()` ravale sa levée                                  6/53
+    le middleware n'attrape plus TokenStoreUnavailable         6/53
+    `handle_admin_api` n'attrape plus TokenStoreUnavailable    4/53
+    `_guard_stale` ne lève jamais                              4/53
+    le refus du middleware laisse tourner l'app en aval        3/53
+    une révocation ratée est annulée en mémoire (S3 et Vault)  3/53
+    une écriture douteuse ne marque plus le cache              3/53
+    `CACHE_TTL` replie un `0` configuré sur 300                3/53
+    un `TTL=0` laisse la grâce rouvrir la fenêtre              2/53
+    le compteur de génération est ignoré (S3 et Vault)         2/53
+    `_serialise` n'incrémente plus le compteur                 2/53
+    l'API admin rend de nouveau `str(e)` dans le corps         2/53
+    `_is_missing_object` accepte de nouveau un statut 404 nu   2/53
+    le verrou des mutations n'est plus réentrant               2/53 (*)
+    `_load` Vault efface le cache, branche réseau              2/53
+    `_load` Vault efface le cache, branche timeout             1/53
+    `_load` Vault efface le cache, branche 403                 1/53
+    `_load` Vault efface le cache, branche 500                 1/53
+    `_load` Vault efface le cache, branche payload illisible   1/53
+    le 404 Vault ne vide plus le cache                         1/53
+    le wrapper Vault rebaisse `_needs_reload`                  1/53
+    le 503 du middleware republie le message du magasin        1/53
+    le refus du middleware redevient un 401                    1/53
+    le 503 du middleware ne dit plus quand réessayer           1/53
+    un websocket invérifiable est accepté                      1/53
+    les routes publiques ne court-circuitent plus l'auth       1/53
+    `_maybe_refresh` ignore le drapeau de revalidation         1/53
+    les mutations ne sont plus sérialisées                     1/53
+
+(*) celle-là interbloque le fil qui exécute pytest, pas un thread de test. Les
+deux rouges tombent en tête de fichier parce que les tests de réentrance sont
+placés en premier, puis `timeout = 60` de `pytest.ini` coupe la suite. Sans ces
+deux garde-fous, la mutation ne rendait pas un rouge mais un blocage de six
+heures, le défaut de GitHub Actions.
 
 Aucun de ces chiffres n'est une estimation, et aucune mutation ne passe
 inaperçue. Reproduire : appliquer une mutation au fichier source, relancer
 `pytest tests/test_token_store_fail_close.py`, compter, annuler.
+
+Deux précautions, apprises en se trompant. Vérifier que la mutation compile
+encore avant de lancer quoi que ce soit : une mutation mal écrite fait tomber la collecte, et
+ce rouge-là se compte comme une détection alors qu'il n'en est pas une. Et
+lancer avec `python -B` après avoir purgé les `__pycache__` : CPython valide un
+`.pyc` sur le couple (mtime en secondes, taille), donc deux mutations qui
+insèrent la même ligne dans deux branches différentes produisent des fichiers
+de taille identique, et la seconde réutilise le bytecode de la première si elle
+est écrite dans la même seconde. Sans ces deux précautions, la même mesure
+rendait tantôt 1 rouge, tantôt 2.
 
 Limite connue et non couverte ici : sans écriture conditionnelle côté magasin,
 deux instances peuvent encore s'écraser mutuellement. Le verrou vérifié plus
@@ -139,6 +162,49 @@ def a_token(hash_value="a" * 64, revoked=False):
         "expires_at": None,
         "revoked": revoked,
     }
+
+
+def _verifier_reentrance(store):
+    """Rend True si le fil courant peut reprendre `_lock` qu'il détient déjà."""
+    assert store._lock.acquire(timeout=1), "le verrou était déjà pris"
+    try:
+        reentrant = store._lock.acquire(timeout=1)
+        if reentrant:
+            store._lock.release()
+    finally:
+        store._lock.release()
+    return reentrant
+
+
+def test_le_verrou_des_mutations_doit_rester_reentrant():
+    """Une mutation prend `_lock`, puis `load()` le reprend par en dessous.
+
+    Chemin exact : `_serialise` prend `_lock`, la mutation appelle `load()`,
+    `load()` appelle `_appliquer_si_pas_perime`, qui refait `with store._lock`.
+    Remplacer `RLock` par `Lock` interbloque donc `store.create(...)` sur le
+    fil de pytest lui-même, dès le premier test de mutation venu, sans qu'un
+    seul thread de test soit en jeu.
+
+    C'est pour ça que ce test existe sous cette forme. Aucune hygiène de
+    threads dans ce fichier ne peut borner un blocage du fil qui exécute
+    pytest, et `_executer_borne` plus bas ne borne que les threads qu'il crée.
+    Ici la régression tombe en une seconde, en rouge, et nommée.
+    """
+    store, _ = make_store()
+    assert _verifier_reentrance(store), (
+        "le verrou du magasin S3 n'est plus réentrant : toute mutation qui "
+        "appelle load() s'interbloquera sur le fil appelant"
+    )
+
+
+def test_le_verrou_du_magasin_vault_doit_aussi_rester_reentrant(monkeypatch):
+    """Vault suit le même chemin `_serialise` → `load()` → helper partagé."""
+    monkeypatch.setattr(ts, "get_vault_application_token", lambda settings: "jeton")
+    store = VaultTokenStore(VaultSettings())
+    assert _verifier_reentrance(store), (
+        "le verrou du magasin Vault n'est plus réentrant : toute mutation qui "
+        "appelle load() s'interbloquera sur le fil appelant"
+    )
 
 
 # --- Lecture -----------------------------------------------------------------
@@ -518,6 +584,120 @@ def test_un_payload_vault_illisible_est_une_indisponibilite_pas_une_ValueError(m
 
     # Et le démarrage encaisse ce cas comme les autres.
     _load_at_startup(store, "Vault")
+
+
+@pytest.mark.parametrize("panne", ["timeout", "reseau", "500", "403", "payload"])
+def test_une_panne_de_lecture_vault_n_efface_pas_le_cache(monkeypatch, panne):
+    """Une panne ne doit pas se présenter comme un magasin vide.
+
+    Ce test double celui du backend S3, parce que la première version de ce
+    correctif ne traitait que S3 : les branches d'erreur de `_load` Vault
+    écrasaient encore `_tokens` avec `{}` avant de lever. Un appelant qui
+    rattrape la levée, ou la fenêtre de grâce elle-même, n'avait alors plus
+    rien à servir, et le magasin répondait « token inconnu » au lieu de
+    « magasin injoignable ».
+
+    Les cinq cas couvrent les cinq sorties d'erreur distinctes de `_load`.
+    Seul le 404 doit vider le cache : là, le secret est vraiment absent.
+    """
+    import httpx
+
+    monkeypatch.setattr(ts, "get_vault_application_token", lambda settings: "jeton")
+    store = VaultTokenStore(VaultSettings())
+    token = a_token()
+    cache_attendu = {token["hash"]: dict(token)}
+    store._tokens = {token["hash"]: dict(token)}
+    store._cache_time = time.time()
+    horodatage = store._cache_time
+
+    def repondre(*a, **k):
+        if panne == "timeout":
+            raise httpx.TimeoutException("vault muet")
+        if panne == "reseau":
+            raise httpx.ConnectError("vault injoignable")
+        if panne == "payload":
+            return ReponseVault(200, json_error=True)
+        return ReponseVault(int(panne))
+
+    monkeypatch.setattr(httpx, "get", repondre)
+
+    with pytest.raises(TokenStoreUnavailable):
+        store.load()
+
+    assert store._tokens == cache_attendu, (
+        f"la panne « {panne} » a effacé le cache : le magasin se présente vide "
+        "alors qu'il est seulement injoignable"
+    )
+    # L'horodatage ne doit pas bouger non plus : le rajeunir ferait passer une
+    # panne pour un chargement réussi et rouvrirait un TTL complet.
+    assert store._cache_time == horodatage
+
+
+@pytest.mark.parametrize(
+    "age, attendu",
+    [(0, "servi"), (10_000, "refuse")],
+    ids=["dans le TTL", "au dela du TTL"],
+)
+def test_ce_que_vault_repond_apres_la_premiere_panne(monkeypatch, age, attendu):
+    """La deuxième requête d'une panne Vault, et les suivantes.
+
+    C'est la promesse que le README fait à l'exploitant, donc elle est tenue
+    ici. Avant le correctif, `_load` vidait le cache et rafraîchissait son
+    horodatage sur chaque erreur : la requête suivante voyait un cache jugé
+    frais et vide, donc un token inconnu, donc un 401 pendant tout le TTL. Un
+    client bien élevé en concluait que son token était invalide et le
+    remplaçait, sur une simple panne réseau.
+
+    Maintenant, dans le TTL le cache fait foi et le token passe. Passé le TTL,
+    le rechargement échoue et la levée remonte, donc 503. Jamais 401.
+    """
+    import httpx
+
+    monkeypatch.setattr(ts, "get_vault_application_token", lambda settings: "jeton")
+    store = VaultTokenStore(VaultSettings())
+    token = a_token()
+    store._tokens = {token["hash"]: dict(token)}
+    store._cache_time = time.time() - age
+
+    def vault_muet(*a, **k):
+        raise httpx.ConnectError("vault injoignable")
+
+    monkeypatch.setattr(httpx, "get", vault_muet)
+
+    if attendu == "servi":
+        assert store.get_by_hash(token["hash"]) is not None
+        return
+
+    # Deux appels, et c'est le second qui compte. Le défaut d'origine ne se
+    # voyait pas sur le premier : celui-ci levait correctement, en vidant le
+    # cache et en rafraîchissant l'horodatage au passage. C'est le second qui
+    # voyait un cache jugé frais et vide, ne rechargeait donc pas, et rendait
+    # None au middleware, qui en faisait un 401.
+    for rang in ("première", "deuxième"):
+        with pytest.raises(TokenStoreUnavailable):
+            resultat = store.get_by_hash(token["hash"])
+            pytest.fail(
+                f"la {rang} requête a rendu {resultat!r} au lieu de refuser : "
+                "le middleware en ferait un 401 sur une panne"
+            )
+
+
+def test_un_secret_vault_absent_vide_bien_le_cache(monkeypatch):
+    """Le 404 est le seul cas où vider est la bonne réponse.
+
+    Sans ce test, le précédent serait satisfait par un `_load` qui ne touche
+    jamais au cache, y compris quand le magasin a réellement été supprimé.
+    """
+    import httpx
+
+    monkeypatch.setattr(ts, "get_vault_application_token", lambda settings: "jeton")
+    store = VaultTokenStore(VaultSettings())
+    store._tokens = {"a" * 64: a_token()}
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: ReponseVault(404))
+
+    store.load()
+
+    assert store._tokens == {}
 
 
 def test_le_statut_dit_aussi_la_verite_pour_le_magasin_vault(monkeypatch):
@@ -928,11 +1108,10 @@ def _executer_borne(action, message, secondes=10):
     """Exécute `action` dans un thread et échoue si elle ne rend pas la main.
 
     Les tests de course appellent une mutation pendant qu'un lecteur tient une
-    I/O bloquée. Si une régression rend le verrou non réentrant, cet appel
-    s'auto-interbloque et, sans borne, pend la suite entière : `pytest-timeout`
-    n'est pas installé et les jobs de la CI n'ont pas de `timeout-minutes`, donc
-    le défaut GitHub de six heures s'appliquerait. On veut un rouge en dix
-    secondes, pas un budget de CI consommé.
+    I/O bloquée. Cette borne ne couvre que le thread créé ici. Un blocage du
+    fil qui exécute pytest lui échappe par construction ; c'est
+    `test_le_verrou_des_mutations_doit_rester_reentrant` qui le nomme, et
+    `timeout = 60` dans `pytest.ini` qui l'arrête.
     """
     import threading
 
@@ -995,14 +1174,21 @@ def test_une_lecture_en_vol_n_efface_pas_une_revocation_aboutie():
     faux = S3QuiRetientLaPremiereLecture()
     store._s3_client = faux
 
-    lecteur = threading.Thread(target=store.load)
+    # daemon : si une régression rend le verrou non réentrant, le lecteur
+    # reste bloqué dans le helper. Un thread non-daemon empêcherait alors
+    # l'interpréteur de sortir, et pytest pendrait au lieu de rendre un rouge.
+    lecteur = threading.Thread(target=store.load, daemon=True)
     lecteur.start()
     assert gete_commence.wait(timeout=5), "le GET du lecteur n'a jamais démarré"
 
-    revocation = _executer_borne(lambda: store.revoke(token["hash"][:16]),
-                                 "store.revoke a bloqué")
+    try:
+        revocation = _executer_borne(lambda: store.revoke(token["hash"][:16]),
+                                     "store.revoke a bloqué")
+    finally:
+        # Libérer même si la révocation échoue : sinon l'échec du test
+        # s'accompagne d'un lecteur suspendu jusqu'à la fin du process.
+        liberer_le_lecteur.set()
     assert revocation is True
-    liberer_le_lecteur.set()
     lecteur.join(timeout=5)
     assert not lecteur.is_alive(), "le lecteur est resté bloqué"
 
@@ -1052,15 +1238,21 @@ def test_vault_aussi_une_lecture_en_vol_n_efface_pas_une_revocation(monkeypatch)
 
     store = VaultTokenStore(VaultSettings())
 
-    lecteur = threading.Thread(target=store.load)
+    # daemon : si une régression rend le verrou non réentrant, le lecteur
+    # reste bloqué dans le helper. Un thread non-daemon empêcherait alors
+    # l'interpréteur de sortir, et pytest pendrait au lieu de rendre un rouge.
+    lecteur = threading.Thread(target=store.load, daemon=True)
     lecteur.start()
     assert gete_commence.wait(timeout=5), "le GET du lecteur n'a jamais démarré"
 
-    revocation = _executer_borne(lambda: store.revoke(token["hash"][:16]),
-                                 "store.revoke a bloqué")
+    try:
+        revocation = _executer_borne(lambda: store.revoke(token["hash"][:16]),
+                                     "store.revoke a bloqué")
+    finally:
+        # Libérer même si la révocation échoue : sinon l'échec du test
+        # s'accompagne d'un lecteur suspendu jusqu'à la fin du process.
+        liberer_le_lecteur.set()
     assert revocation is True
-
-    liberer_le_lecteur.set()
     lecteur.join(timeout=5)
     assert not lecteur.is_alive(), "le lecteur est resté bloqué"
 

@@ -15,6 +15,10 @@ permissions:
 jobs:
   unit-integration:
     runs-on: ubuntu-latest
+    # Borne dure du job. `timeout` dans pytest.ini borne chaque test ;
+    # ceci borne ce que pytest ne voit pas (pip, docker compose, un service
+    # qui ne repond jamais). Sans cette ligne, le defaut est de 360 minutes.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -24,7 +28,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip==26.2.1
           python -m pip install --require-hashes -r boilerplate/requirements.lock
-          python -m pip install pytest==9.1.1 pytest-asyncio==1.4.0 pip-audit==2.10.1
+          python -m pip install pytest==9.1.1 pytest-asyncio==1.4.0 pytest-timeout==2.4.0 pip-audit==2.10.1
       - name: Audit Python dependencies
         run: |
           python -m pip_audit -r boilerplate/requirements.lock
@@ -48,6 +52,10 @@ jobs:
 
   e2e-s3-compose:
     runs-on: ubuntu-latest
+    # Borne dure du job. `timeout` dans pytest.ini borne chaque test ;
+    # ceci borne ce que pytest ne voit pas (pip, docker compose, un service
+    # qui ne repond jamais). Sans cette ligne, le defaut est de 360 minutes.
+    timeout-minutes: 20
     needs: unit-integration
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -58,7 +66,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip==26.2.1
           python -m pip install --require-hashes -r boilerplate/requirements.lock
-          python -m pip install pytest==9.1.1 pytest-asyncio==1.4.0
+          python -m pip install pytest==9.1.1 pytest-asyncio==1.4.0 pytest-timeout==2.4.0
       - name: Start CI stack (WAF + MCP + Moto S3)
         run: |
           docker compose -f boilerplate/docker-compose.ci.yml up -d --build
@@ -94,6 +102,10 @@ jobs:
 
   e2e-vault-compose:
     runs-on: ubuntu-latest
+    # Borne dure du job. `timeout` dans pytest.ini borne chaque test ;
+    # ceci borne ce que pytest ne voit pas (pip, docker compose, un service
+    # qui ne repond jamais). Sans cette ligne, le defaut est de 360 minutes.
+    timeout-minutes: 20
     needs: unit-integration
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -104,7 +116,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip==26.2.1
           python -m pip install --require-hashes -r boilerplate/requirements.lock
-          python -m pip install pytest==9.1.1 pytest-asyncio==1.4.0
+          python -m pip install pytest==9.1.1 pytest-asyncio==1.4.0 pytest-timeout==2.4.0
       - name: Start Vault CI stack (WAF + MCP + fake MCP Vault)
         run: |
           docker compose -f boilerplate/docker-compose.vault-ci.yml up -d --build

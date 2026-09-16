@@ -187,7 +187,7 @@ docs/server-deployment.md
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install --require-hashes -r requirements.lock
-pip install pytest pytest-asyncio
+pip install pytest pytest-asyncio pytest-timeout
 python -m pytest tests -q
 ```
 

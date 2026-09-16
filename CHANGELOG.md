@@ -10,12 +10,12 @@ is the one that stings: the suite claimed to cover a behaviour it never touched.
 - **The middleware's `503` was never tested.** Removing the whole
   `except TokenStoreUnavailable` from `AuthMiddleware` left all 128 tests green,
   in every repository of the fleet. The CHANGELOG entries and pull request
-  descriptions for v2.0.5 and v2.0.6 claimed otherwise. Nine tests now cover the
-  refusal: `503` and not `401`, the downstream app never runs, the store's
+  descriptions for v2.0.5 and v2.0.6 claimed otherwise. Six tests now cover the
+  refusal itself: `503` and not `401`, the downstream app never runs, the store's
   message stays out of the body, `Retry-After` is set, a websocket is closed with
-  1013, the contextvar does not leak, a valid token still passes, anonymous
-  traffic still passes, and `/health` stays green during an outage so the
-  orchestrator does not restart instances that are fine.
+  1013, and the contextvar does not leak. Three more pin the behaviours around it
+  that must not change: a public path never consults the store, anonymous traffic
+  still passes, and a valid token still passes.
 - **`TOKEN_STORE_CACHE_TTL=0` no longer serves the cache for five minutes.**
   A null TTL forced a reload, but when that reload failed `_guard_stale` still
   allowed the cache for `0 + TOKEN_STORE_STALE_GRACE`, which defaults to 300
@@ -53,15 +53,55 @@ The reviewer refused the first version. It was right to.
   property that is real and worth protecting: a public path never consults the
   store at all.
 - **The race tests could hang CI instead of failing.** The call to `revoke()`
-  had no bound. `pytest-timeout` is not installed and the CI jobs have no
-  `timeout-minutes`, so a regression making the lock non-reentrant would have
-  burned the GitHub default of six hours. Both race tests now fail in ten
-  seconds instead.
+  had no bound, so a regression making the lock non-reentrant would have burned
+  the GitHub default of six hours. The reader threads are now daemons and the
+  bound is honoured. This is a partial answer, and the next section says why.
 - **`TOKEN_STORE_CACHE_TTL=0` also closes the admin console** during an outage,
   because `_guard_stale` serves `list_all` as well as `get_by_hash`. Only the
   bootstrap key still gets in. The behaviour is consistent with fail-close and is
   kept, but it was undocumented. Now stated in the README and `.env.example`, and
   pinned by a test.
+
+### Fixed after the second independent review
+
+The second reviewer took the bound above apart. It was right too.
+
+- **The bound was in the wrong place.** Making the reader threads daemons only
+  covers threads the test file creates. The deadlock a non-reentrant lock
+  produces is on the thread running pytest: `_serialise` takes `_lock`, the
+  mutation calls `load()`, and `load()` takes it again through the shared
+  helper. Measured, replacing `RLock` with `Lock` hangs
+  `test_une_creation_dont_l_ecriture_echoue_n_expose_aucun_token`, which creates
+  a token and touches no thread at all. The claim that both
+  race tests fail in ten seconds was true in isolation and false for the suite.
+  Two things fix it. A test now asserts the lock is reentrant, using
+  `acquire(timeout=1)`, so the regression is a red in one second instead of a
+  hang, and it is placed first in the file so it is the first thing that fails.
+  And `pytest.ini` sets `timeout = 60` with `timeout_method = thread`, which
+  prints every thread's stack and kills the process. `signal` was tried first
+  and does not interrupt a blocked `acquire()` here; that was measured, not
+  assumed. The three CI jobs also get `timeout-minutes: 20`, ten times their
+  real duration, for what pytest cannot see: a `pip install` or a
+  `docker compose` that never returns.
+- **The Vault store still wiped its cache on a read failure.** Every error path
+  in `_load()` replaced `_tokens` with `{}` and refreshed `_cache_time` before
+  raising, so an outage presented itself as an empty store and the bounded stale
+  window had nothing left to serve. It was listed as a known limitation and
+  tracked in issue #30; it belongs here instead, because this release is the one
+  that claims the store fails closed rather than lying. The five error paths now
+  leave the cache alone, and the `404`, where the secret really is gone, still
+  clears it. Six tests, one per path.
+- **The mutation harness was producing numbers it had not measured.** Two
+  separate flaws. It inserted a malformed line into the source, collection
+  failed, pytest reported one error, and the counter read that as one test
+  detecting the mutation. And it left stale bytecode behind: CPython validates a
+  `.pyc` on the pair (mtime in whole seconds, size), so two mutations inserting
+  the same line into two different branches produce files of identical size, and
+  the second run reused the first one's bytecode. The same mutation measured 1
+  red on one run and 2 on the next. The harness now parses the mutated source
+  before running anything, purges `__pycache__`, and runs with `python -B`. Two
+  consecutive measurements are now identical: 30 mutations, 53 tests, none
+  undetected.
 
 ### Changed
 
@@ -74,10 +114,6 @@ The reviewer refused the first version. It was right to.
 
 - No conditional write on the store side, so two instances can still overwrite
   each other. See issue #28.
-- The Vault backend wipes `_tokens` and refreshes `_cache_time` on every load
-  error before raising. The first request gets its `503`, every later one within
-  the TTL gets a `401` instead. This predates the fail-close work, and it fails
-  closed rather than open, so it is tracked in issue #30 rather than rushed here.
 
 
 ## v2.0.6 — 2026-09-15 — Two defects found while backporting v2.0.5

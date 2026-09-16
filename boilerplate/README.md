@@ -452,17 +452,21 @@ traduit en réponse HTTP. Le tableau ci-dessous décrit le **backend S3**.
 Pendant une panne, les tentatives sont espacées par un backoff exponentiel
 d'une à soixante secondes, au lieu d'un appel S3 par requête entrante.
 
-Le backend Vault refuse l'accès dès la première panne, sans fenêtre de cache
-périmé ni backoff : il ne lit pas `TOKEN_STORE_FAIL_MODE` ni
-`TOKEN_STORE_STALE_GRACE`. Il refuse donc davantage que S3, jamais moins.
+Le backend Vault n'a ni fenêtre de cache périmé ni backoff : il ne lit pas
+`TOKEN_STORE_FAIL_MODE` ni `TOKEN_STORE_STALE_GRACE`. Dès que son TTL est
+dépassé et que le rechargement échoue, il refuse. Il refuse donc davantage que
+S3, jamais moins.
 
-Il refuse en revanche de la mauvaise manière passé la première requête. Sur
-une erreur de chargement, il vide son cache et rafraîchit son horodatage avant
-de lever : la requête qui subit la panne reçoit bien un 503, mais les suivantes
-voient un cache jugé frais et vide, donc un token inconnu, donc un 401 pendant
-tout le TTL. Un client bien élevé en conclura que son token est invalide et le
-remplacera. Le comportement est plus restrictif que S3, jamais plus permissif,
-mais le code d'erreur ment. Suivi par l'issue #30.
+Passé la première requête, il garde son cache et son horodatage au lieu de les
+effacer. Dans le TTL, la requête suivante est donc servie depuis ce cache,
+comme en fonctionnement normal. Au-delà, le rechargement échoue et la levée
+remonte : 503. Jamais 401 sur une panne.
+
+Jusqu'à la v2.0.7 il faisait l'inverse : chaque erreur de chargement vidait le
+cache et rafraîchissait son horodatage, si bien que les requêtes suivantes
+voyaient un cache jugé frais et vide, donc un token inconnu, donc un 401
+pendant tout le TTL. Un client bien élevé en concluait que son token était
+invalide et le remplaçait, sur une simple panne réseau.
 
 Dans les deux cas, une panne du magasin n'empêche pas le service de démarrer :
 `/health`, la console d'administration et la clé bootstrap restent disponibles
