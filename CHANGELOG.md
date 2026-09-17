@@ -1,5 +1,62 @@
 # Changelog
 
+## v2.0.8 — 2026-09-17 — The real-S3 layer that never ran
+
+### Fixed
+
+- **`tests/integration/` was green because it never executed.** The one test marked
+  `real_s3` was collected by default CI and skipped there on every run, for want of
+  `RUN_REAL_S3=1`. No workflow set it, and `tests/README.md` described a nightly
+  workflow that did not exist. The layer meant to validate compatibility with the
+  real Cloud Temple / Dell ECS endpoint had validated nothing, and a skip is green.
+  The new `Real S3 (Dell ECS)` workflow runs it on manual dispatch against the
+  `nightly-real-s3` environment, whose secrets were already provisioned. It also
+  fails when a `real_s3` test skips, so an incomplete environment can no longer
+  pass for a successful run.
+
+### Added
+
+- **`tests/integration/test_ecriture_conditionnelle_ecs.py`.** Does the real ECS
+  honour `If-Match` and `If-None-Match`, and does it honour them atomically? The
+  question has blocked the token store fix on `starter-kit#28`, `mcp-office#4` and
+  `mcp-teleport#146` since June, and `RFC 0001` in `agentic-platform` has carried it
+  as undecided since 2026-07-08.
+
+  It is sharper than it looks. Cloud Temple requires SigV2 for object data
+  operations, and `HmacV1Auth` signs only `content-md5`, `content-type`, `date` and
+  the `x-amz-*` headers. `If-Match` is not covered. A backend that does not
+  implement it returns no error at all: it ignores the header, the PUT succeeds, and
+  the caller believes it holds a lock it never had. The fix would reintroduce the
+  very failure it closes.
+
+  So the tests require rather than observe, and a failure is the answer. A correct
+  `If-Match` must be accepted, without which a server refusing everything would look
+  like a server protecting something. A deliberately wrong one must be refused with
+  412, which is the case that decides. `If-None-Match: *` is tested separately
+  because it is a distinct primitive, and the one an object-per-token layout would
+  need. Both signature versions are covered.
+
+  A 412 in sequence does not prove atomicity: a server may compare then write in two
+  steps and lose the race in between. The concurrency test puts writers behind a
+  barrier so they all issue their PUT from the same ETag, where exactly one must win.
+  Without the barrier, measured against MinIO, 277 writes out of 400 succeeded with
+  no loss at all, because the slow writer read after another's PUT and never
+  contended. A compare-and-swap breaking one time in a thousand would have passed.
+
+- **`scripts/mutations_ecriture_conditionnelle.py`.** Removing a conditional header
+  reproduces exactly what an ignoring server does, so the matching test must fall.
+  Three mutations out of three are detected against MinIO. The two control tests
+  carry no mutation and the harness says why: their subject is a server that refuses
+  conditions outright, a failure that cannot be produced by mutating the client. An
+  anchor that no longer matches fails loudly rather than reading as a detection.
+
+### Notes
+
+- The real bucket's IP whitelist was the documented reason for not wiring this to
+  GitHub-hosted CI. It has never been observed, because the test never ran. The
+  workflow makes it measurable, and its `executant` input moves the run to a
+  self-hosted runner with a fixed egress IP once one exists.
+
 ## v2.0.7 — 2026-09-15 — What the counter-review found in v2.0.6
 
 An adversarial review of the v2.0.6 backports turned up three defects. The first
