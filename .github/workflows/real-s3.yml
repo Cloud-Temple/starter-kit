@@ -20,6 +20,13 @@
 # La seconde : le jour où un runner auto-hébergé à IP fixe existe, il n'y aura
 # qu'à changer `runs-on`, l'entrée `executant` est là pour ça.
 #
+# Par défaut, seules les épreuves d'écriture conditionnelle tournent. Elles
+# n'écrivent que sous un préfixe `_sonde/<uuid>/` qu'elles suppriment ensuite.
+# `test_real_s3_tokenstore.py` en est exclu : il écrit sur la vraie clé
+# `_system/tokens.json`, la sauvegarde et la restaure, et ce code n'a encore
+# jamais été exécuté. L'entrée `selection` permet de l'inclure une fois qu'un
+# premier lancement aura établi que l'accès au seau fonctionne.
+#
 # Déclenchement manuel uniquement. L'environnement `nightly-real-s3` exige une
 # approbation humaine à chaque exécution : une planification nocturne
 # produirait une demande en attente toutes les nuits, que personne ne
@@ -41,6 +48,10 @@ on:
         description: "Étiquette du runner. Passer à un runner auto-hébergé à IP fixe si la liste blanche du seau bloque les runners GitHub."
         required: false
         default: "ubuntu-latest"
+      selection:
+        description: "Chemin pytest à lancer. Par défaut les seules épreuves d'écriture conditionnelle, qui n'écrivent que sous _sonde/. Passer `tests` pour y ajouter test_real_s3_tokenstore.py, qui écrit sur la vraie clé _system/tokens.json et la restaure."
+        required: false
+        default: "tests/integration/test_ecriture_conditionnelle_ecs.py"
 
 permissions:
   contents: read
@@ -74,8 +85,13 @@ jobs:
           S3_REGION_NAME: ${{ secrets.S3_REGION_NAME }}
           SONDE_ECRIVAINS: ${{ inputs.ecrivains }}
           SONDE_RONDES: ${{ inputs.rondes }}
+          # Passée par l'environnement et pas interpolée dans la commande :
+          # une entrée de `workflow_dispatch` écrite directement dans un `run`
+          # est une injection de commande.
+          SELECTION: ${{ inputs.selection }}
         run: |
-          python -m pytest tests -q -m real_s3 -rs -rw --junitxml=rapport-real-s3.xml
+          python -m pytest "${SELECTION:-tests/integration/test_ecriture_conditionnelle_ecs.py}" \
+            -q -m real_s3 -rs -rw --junitxml=rapport-real-s3.xml
 
       # Un secret absent fait skipper les tests, et un skip est vert : la panne
       # silencieuse que ce workflow vient corriger se réinstallerait ici.

@@ -53,6 +53,18 @@
   conditions outright, a failure that cannot be produced by mutating the client. An
   anchor that no longer matches fails loudly rather than reading as a detection.
 
+### Changed
+
+- **The `Real S3 (Dell ECS)` workflow now runs only the conditional-write tests by
+  default.** They write under a `_sonde/<uuid>/` prefix and delete it afterwards.
+  `test_real_s3_tokenstore.py` writes to the live `_system/tokens.json` key, backs it
+  up and restores it, and that backup-and-restore code has never executed once. A
+  first run against the real bucket should not be the occasion to find out whether it
+  works. The `selection` input includes it once access is established. The input
+  reaches pytest through the environment rather than the command line, since a
+  `workflow_dispatch` input written straight into a `run` block is a command
+  injection.
+
 ### Also found
 
 - **Listing fails under SigV2.** The fixture's own cleanup surfaced it on its first
