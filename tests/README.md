@@ -178,7 +178,10 @@ Moto S3 is used for default CI because it is maintained, reproducible and
 secretless. Its Python dependencies are hash-locked and audited independently.
 It does not replace real Cloud Temple / Dell ECS validation.
 
-Real S3 tests should run only in nightly/manual workflows using GitHub environment secrets (for example `nightly-real-s3`).
+Real S3 tests run only on manual dispatch, through the `Real S3 (Dell ECS)` workflow,
+which reads the `nightly-real-s3` environment secrets. That environment requires a
+human approval on every run, so the workflow has no schedule: a nightly trigger would
+queue an approval request every night that nobody would clear.
 
 ## Real S3 validation (manual / controlled environment)
 
@@ -188,9 +191,16 @@ The real S3 TokenStore test is available at:
 tests/integration/test_real_s3_tokenstore.py
 ```
 
-It is intentionally **not** wired to GitHub-hosted CI for now.
+Until 2026-09-17 nothing ran it. The test was collected by default CI and skipped there on
+every run for want of `RUN_REAL_S3=1`, and a skip is green.
 
-Reason: the dedicated Cloud Temple S3 test bucket uses a custom access policy with a strict IP whitelist. GitHub-hosted runners use dynamic public IPs and can fail with `AccessDenied` even when credentials and grants are correct.
+The documented reason was the bucket's access policy, a strict IP whitelist that
+GitHub-hosted runners, with their changing public addresses, were expected to trip on with
+`AccessDenied`. That expectation has never been observed, because the test never ran. The
+`Real S3 (Dell ECS)` workflow now makes it measurable: dispatch it on `ubuntu-latest` and
+either it fails with `AccessDenied`, which confirms the reason, or it passes, which retires
+it. Its `executant` input switches the run to a self-hosted runner with a fixed egress IP
+once one exists.
 
 Default CI therefore remains:
 
@@ -217,8 +227,28 @@ S3_REGION_NAME
 Example:
 
 ```bash
-RUN_REAL_S3=1 python3.11 -m pytest tests/integration/test_real_s3_tokenstore.py -q -m real_s3
+RUN_REAL_S3=1 python3.11 -m pytest tests/integration -q -m real_s3
 ```
+
+### Conditional writes on Dell ECS
+
+`tests/integration/test_ecriture_conditionnelle_ecs.py` answers a question that blocks the
+token store fix on three repositories: does the real ECS honour `If-Match` and
+`If-None-Match`, and does it honour them atomically?
+
+It matters because Cloud Temple requires SigV2 for object data operations, and SigV2 does
+not sign the `If-Match` header. A backend that does not implement it therefore ignores it in
+silence: the PUT succeeds and the caller believes it holds a lock it never had.
+
+The tests do not observe, they require. A failure is the answer. They run under both
+signature versions, and the concurrency test puts writers behind a barrier so they all issue
+their PUT from the same ETag, where exactly one must win.
+
+Their own ability to fail is proven separately, against MinIO rather than the real bucket,
+by `scripts/mutations_ecriture_conditionnelle.py`. Removing a conditional header reproduces
+what an ignoring server does; the harness checks that the matching test then falls. Three
+mutations out of three are detected. Read its docstring for why the two control tests carry
+no mutation.
 
 Credentials must be read from MCP Vault and must never be committed to git.
 
