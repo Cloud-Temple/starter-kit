@@ -30,14 +30,17 @@ aurait besoin l'autre route, un objet S3 par token.
 Concurrent. Un 412 en séquentiel ne prouve pas l'atomicité : un serveur peut
 comparer puis écrire en deux temps et perdre la course entre les deux. Des
 écrivains lisent le même objet, attendent à une barrière, puis écrivent tous
-avec le MÊME ETag. Un seul doit gagner. Sans la barrière, mesuré contre MinIO,
-277 écritures sur 400 réussissaient parce que l'écrivain lent lisait après le
-PUT d'un autre : la collision n'avait jamais lieu et un CAS cassé une fois sur
-mille serait passé inaperçu.
+avec le MÊME ETag. Un seul doit gagner. Sans la barrière, mesuré contre MinIO
+avec 8 écrivains et 50 rondes, soit 400 écritures, 277 réussissaient parce que
+l'écrivain lent lisait après le PUT d'un autre : la collision n'avait jamais
+lieu et un CAS cassé une fois sur mille serait passé inaperçu.
 
-L'instrument a été validé avant d'être utilisé : la même épreuve, privée de son
-en-tête conditionnel, rapporte 350 marques perdues sur 400 écritures. Un « zéro
-perte » n'est donc pas le silence d'un compteur mort.
+L'instrument a été validé avant d'être utilisé : la même épreuve dans la même
+configuration, privée de son en-tête conditionnel, rapporte 350 marques perdues
+sur 400 écritures. Un « zéro perte » n'est donc pas le silence d'un compteur
+mort. Les défauts de ce fichier sont plus modestes, 8 écrivains et 25 rondes,
+pour tenir dans un lancement manuel ; `SONDE_ECRIVAINS` et `SONDE_RONDES` les
+remontent.
 
 Le client S3 est celui du magasin, obtenu par `TokenStore._get_s3()`, pour
 mesurer la configuration que la production utilise et pas une configuration
@@ -50,6 +53,7 @@ import os
 import sys
 import threading
 import uuid
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -122,27 +126,50 @@ def bac(request):
 
     reglages = _reglages(request.param)
     s3 = TokenStore(reglages)._get_s3()
+    # Le ménage liste, et le listage échoue sous SigV2 : mesuré contre MinIO,
+    # `list_objects_v2` comme `list_objects` rendent `SignatureDoesNotMatch`.
+    # La flotte connaît déjà ce partage, un client SigV4 pour lister à côté du
+    # client SigV2 pour les données (`mcp_tools/auth/token_store.py`,
+    # `mcp_office/scripts/utils/sync_assets.py`). L'épreuve elle-même reste sur
+    # la signature testée : c'est elle qui est le sujet.
+    menage = TokenStore(_reglages("s3v4"))._get_s3()
     prefixe = f"_sonde/{uuid.uuid4().hex}/"
     try:
         yield s3, reglages.s3_bucket_name, prefixe, request.param
     finally:
+        # Un nettoyage qui échoue en silence laisse des objets dans un vrai
+        # seau de production. Le workflow qui lance ces tests anticipe
+        # justement un `AccessDenied` : sans avertissement, chaque exécution
+        # y déposerait des objets que personne ne verrait. On avertit donc
+        # bruyamment, avec le préfixe à supprimer à la main, sans transformer
+        # l'échec du ménage en verdict sur le stockage.
+        restes = []
         jeton = None
         while True:
             kw = {"Bucket": reglages.s3_bucket_name, "Prefix": prefixe}
             if jeton:
                 kw["ContinuationToken"] = jeton
             try:
-                page = s3.list_objects_v2(**kw)
-            except ClientError:
+                page = menage.list_objects_v2(**kw)
+            except Exception as erreur:
+                restes.append(f"inventaire impossible ({type(erreur).__name__}: {erreur})")
                 break
             for objet in page.get("Contents", []):
                 try:
-                    s3.delete_object(Bucket=reglages.s3_bucket_name, Key=objet["Key"])
-                except ClientError:
-                    pass
+                    menage.delete_object(Bucket=reglages.s3_bucket_name, Key=objet["Key"])
+                except Exception as erreur:
+                    restes.append(f"{objet['Key']} ({type(erreur).__name__})")
             if not page.get("IsTruncated"):
                 break
             jeton = page.get("NextContinuationToken")
+
+        if restes:
+            message = (
+                f"nettoyage incomplet dans {reglages.s3_bucket_name}, à supprimer "
+                f"à la main sous {prefixe} : {restes}"
+            )
+            warnings.warn(message, stacklevel=1)
+            print(message, file=sys.stderr)
 
 
 def _statut(erreur):
@@ -258,6 +285,13 @@ def test_if_match_est_atomique_sous_concurrence(bac):
                 if _statut(erreur) == 412 or _code(erreur) == "PreconditionFailed":
                     return "conflit", None
                 return "autre", f"{_code(erreur)} HTTP {_statut(erreur)}"
+            except Exception as erreur:
+                # Une coupure réseau contre un endpoint distant n'est pas une
+                # `ClientError` mais une `BotoCoreError`. Laissée libre, elle
+                # traverse `map` et tue l'épreuve avec une trace brute, au lieu
+                # du diagnostic construit plus bas. C'est pourtant le mode de
+                # panne le plus probable là où ce fichier est censé tourner.
+                return "autre", f"{type(erreur).__name__}: {erreur}"
 
         gagnants = 0
         with ThreadPoolExecutor(max_workers=ecrivains) as bassin:

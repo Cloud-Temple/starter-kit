@@ -39,16 +39,31 @@
   A 412 in sequence does not prove atomicity: a server may compare then write in two
   steps and lose the race in between. The concurrency test puts writers behind a
   barrier so they all issue their PUT from the same ETag, where exactly one must win.
-  Without the barrier, measured against MinIO, 277 writes out of 400 succeeded with
-  no loss at all, because the slow writer read after another's PUT and never
-  contended. A compare-and-swap breaking one time in a thousand would have passed.
+  Without the barrier, measured against MinIO with 8 writers over 50 rounds, 277
+  writes out of 400 succeeded with no loss at all, because the slow writer read
+  after another's PUT and never contended. A compare-and-swap breaking one time in
+  a thousand would have passed. The file's own defaults are smaller, 8 writers over
+  25 rounds, to fit a manual run; `SONDE_ECRIVAINS` and `SONDE_RONDES` raise them.
 
 - **`scripts/mutations_ecriture_conditionnelle.py`.** Removing a conditional header
   reproduces exactly what an ignoring server does, so the matching test must fall.
-  Three mutations out of three are detected against MinIO. The two control tests
-  carry no mutation and the harness says why: their subject is a server that refuses
+  Three mutations out of three are detected against MinIO, each target first run
+  unmutated so that a broken environment cannot pass for three kills. The two
+  control tests carry no mutation and the harness says why: their subject is a server that refuses
   conditions outright, a failure that cannot be produced by mutating the client. An
   anchor that no longer matches fails loudly rather than reading as a detection.
+
+### Also found
+
+- **Listing fails under SigV2.** The fixture's own cleanup surfaced it on its first
+  run: `list_objects_v2` and `list_objects` both return `SignatureDoesNotMatch`
+  against MinIO when the client signs with SigV2, which is the fleet default for
+  object data operations. The fleet already works around this by keeping a separate
+  SigV4 client for listing (`mcp_tools/auth/token_store.py`,
+  `mcp_office/scripts/utils/sync_assets.py`); the fixture now does the same, while
+  the tests themselves stay on the signature under test. Before the cleanup was made
+  to warn, this failure was swallowed and left probe objects behind on every SigV2
+  run.
 
 ### Notes
 

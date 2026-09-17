@@ -9,6 +9,11 @@ fait un serveur qui l'ignore : le test visé doit tomber.
 
 Contre MinIO, trois mutations sur trois sont détectées.
 
+Chaque cible est d'abord lancée non mutée. Sans cette course de référence, un
+stockage injoignable ou une variable mal exportée ferait échouer les trois
+cibles quoi qu'il arrive, et le harnais annoncerait « 3/3 détectées » en
+n'ayant mesuré que sa propre panne.
+
 Deux tests n'ont volontairement aucune mutation, et c'est le point important.
 `test_if_match_accepte_un_etag_juste` et `test_if_none_match_cree_un_objet_absent`
 sont des témoins : leur sujet n'est pas le serveur qui IGNORE la condition mais
@@ -19,9 +24,9 @@ Le mode de panne qu'ils détectent ne se produit pas en mutant le client, il se
 produit en changeant de serveur : on ne le simule donc pas.
 
 La barrière du test de concurrence n'est pas mutée non plus. La retirer ne fait
-pas tomber le test contre un serveur conforme : mesuré, 277 écritures réussies
-sur 400 sans aucune perte, parce que l'écrivain lent lit après le PUT d'un
-autre et ne se dispute jamais l'objet. Elle n'est pas là pour détecter, elle est
+pas tomber le test contre un serveur conforme : mesuré avec 8 écrivains et 50
+rondes, soit 400 écritures, 277 réussies sans aucune perte, parce que l'écrivain
+lent lit après le PUT d'un autre et ne se dispute jamais l'objet. Elle n'est pas là pour détecter, elle est
 là pour porter la probabilité de collision à un niveau utile. Sa valeur se lit
 sur le compteur de conflits du test, pas sur une mutation.
 
@@ -79,6 +84,14 @@ def _purger_bytecode():
                 dossiers.remove(dossier)
 
 
+def _lancer(cible):
+    return subprocess.run(
+        [sys.executable, "-B", "-m", "pytest", f"{CHEMIN}::{cible}",
+         "-q", "-p", "no:cacheprovider"],
+        capture_output=True, text=True,
+    )
+
+
 def main():
     if not os.path.exists(CHEMIN):
         print(f"lancer depuis la racine du dépôt : {CHEMIN} introuvable")
@@ -88,6 +101,23 @@ def main():
         return 2
 
     origine = open(CHEMIN, encoding="utf-8").read()
+
+    # Course de référence, sans quoi le reste ne prouve rien. Un verdict
+    # « détectée » se lit sur un code de sortie non nul, et un stockage
+    # injoignable, un mauvais nom de seau ou une variable mal exportée font
+    # échouer les cibles mutées ou non. Le harnais annoncerait alors 3/3 en
+    # n'ayant mesuré que sa propre panne.
+    _purger_bytecode()
+    for cible in sorted({m[3] for m in MUTATIONS}):
+        reference = _lancer(cible)
+        if reference.returncode != 0:
+            print(f"  RÉFÉRENCE   {cible} échoue AVANT toute mutation")
+            derniere = reference.stdout.strip().splitlines()
+            if derniere:
+                print(f"              {derniere[-1]}")
+            print("\nenvironnement inutilisable, aucune mutation lancée")
+            return 2
+    print(f"  référence   {len({m[3] for m in MUTATIONS})} cible(s) vertes avant mutation")
     echecs = []
     try:
         for nom, ancien, nouveau, cible in MUTATIONS:
@@ -106,11 +136,7 @@ def main():
 
             open(CHEMIN, "w", encoding="utf-8").write(mute)
             _purger_bytecode()
-            resultat = subprocess.run(
-                [sys.executable, "-B", "-m", "pytest", f"{CHEMIN}::{cible}",
-                 "-q", "-p", "no:cacheprovider"],
-                capture_output=True, text=True,
-            )
+            resultat = _lancer(cible)
             open(CHEMIN, "w", encoding="utf-8").write(origine)
 
             if resultat.returncode != 0:

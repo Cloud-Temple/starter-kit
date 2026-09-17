@@ -75,30 +75,56 @@ jobs:
           SONDE_ECRIVAINS: ${{ inputs.ecrivains }}
           SONDE_RONDES: ${{ inputs.rondes }}
         run: |
-          python -m pytest tests -q -m real_s3 -rs
+          python -m pytest tests -q -m real_s3 -rs -rw --junitxml=rapport-real-s3.xml
 
-      - name: Fail if nothing ran
+      # Un secret absent fait skipper les tests, et un skip est vert : la panne
+      # silencieuse que ce workflow vient corriger se réinstallerait ici.
+      #
+      # Cette étape lit le rapport de l'exécution ci-dessus au lieu de relancer
+      # pytest. Une relance coûterait de vraies écritures dans le seau, ne
+      # recevrait pas les paramètres du déclenchement, et surtout son code de
+      # sortie serait perdu : compter des lignes « SKIPPED » dans une sortie ne
+      # dit rien d'une exécution qui a échoué sans en produire aucune.
+      - name: Verify something actually ran
         if: always()
-        env:
-          RUN_REAL_S3: "1"
-          S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL }}
-          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
-          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
-          S3_REGION_NAME: ${{ secrets.S3_REGION_NAME }}
-        # Un secret absent fait skipper les tests, et un skip est vert : la même
-        # panne silencieuse que ce workflow vient corriger se réinstallerait ici.
-        # On compte donc ce qui a réellement tourné.
         run: |
-          collectes=$(python -m pytest tests -q -m real_s3 --collect-only 2>/dev/null | grep -c '::' || true)
-          echo "tests real_s3 collectés : $collectes"
-          if [ "$collectes" -lt 1 ]; then
-            echo "::error::aucun test real_s3 collecté"
-            exit 1
-          fi
-          skips=$(python -m pytest tests -q -m real_s3 -rs 2>&1 | grep -c '^SKIPPED' || true)
-          echo "tests real_s3 skippés : $skips"
-          if [ "$skips" -gt 0 ]; then
-            echo "::error::des tests real_s3 ont skippé, les secrets de l'environnement sont incomplets"
-            exit 1
-          fi
+          python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          rapport = Path("rapport-real-s3.xml")
+          if not rapport.exists():
+              print("::error::aucun rapport produit, pytest n'a pas démarré")
+              sys.exit(1)
+
+          racine = ET.parse(rapport).getroot()
+          suites = racine.findall("testsuite") or [racine]
+          total = sum(int(s.get("tests", 0)) for s in suites)
+          skips = sum(int(s.get("skipped", 0)) for s in suites)
+          echecs = sum(int(s.get("failures", 0)) for s in suites)
+          erreurs = sum(int(s.get("errors", 0)) for s in suites)
+          print(f"real_s3 : {total} tests, {skips} skippés, "
+                f"{echecs} échecs, {erreurs} erreurs")
+
+          probleme = False
+          if total == 0:
+              print("::error::aucun test real_s3 n'a été collecté")
+              probleme = True
+          if skips:
+              print("::error::des tests real_s3 ont skippé, les secrets de "
+                    "l'environnement sont incomplets")
+              probleme = True
+          if echecs or erreurs:
+              print("::error::des tests real_s3 ont échoué")
+              probleme = True
+          sys.exit(1 if probleme else 0)
+          PY
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-real-s3
+          path: rapport-real-s3.xml
+          if-no-files-found: warn
