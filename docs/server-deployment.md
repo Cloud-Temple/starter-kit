@@ -4,6 +4,12 @@
 > Ce guide décrit le déploiement d'un MCP construit à partir du starter-kit.  
 > Il ne s'adresse pas à l'utilisateur final Cline/Cursor.
 
+Pour les choix de stockage et de reprise propres au produit, consulter son
+`DESIGN/DATA_DESIGN.md`, renseigné à partir du
+[guide de conception des données](data-design.md). Standalone et base externe
+partagée sont des choix à documenter lorsqu'ils sont utiles au MCP ; le gabarit
+ne configure pas ces services ni leur sauvegarde.
+
 ## 1. Rôle de l'administrateur serveur
 
 L'administrateur serveur doit :

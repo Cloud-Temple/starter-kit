@@ -68,6 +68,11 @@ python -m src.mon_service
 Ce service suit le pattern **3 couches + middlewares ASGI** Cloud Temple.
 Voir [DESIGN/ARCHITECTURE.md](DESIGN/ARCHITECTURE.md) pour les détails.
 
+Pour concevoir les données de votre MCP, compléter
+[DESIGN/DATA_DESIGN.md](DESIGN/DATA_DESIGN.md) : autorités, droits, concurrence,
+rétention, sauvegarde et restauration. Ce canevas laisse au projet dérivé ses
+modèles, son stockage et ses choix de déploiement ; il n'active aucun backend.
+
 ### 3 couches d'interface
 
 | Couche           | Fichier                       | Rôle                               |
