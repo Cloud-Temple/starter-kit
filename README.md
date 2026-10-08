@@ -29,6 +29,7 @@ Voir [le fonctionnement et l'installation](#11-règles-agentiques-pour-projets-d
 | Besoin | Document |
 |---|---|
 | Créer un nouveau MCP depuis le starter-kit | [`docs/create-new-mcp.md`](docs/create-new-mcp.md) |
+| Concevoir les données du projet dérivé | [`docs/data-design.md`](docs/data-design.md) |
 | Déployer un serveur MCP généré | [`docs/server-deployment.md`](docs/server-deployment.md) |
 | Configurer Cline/Cursor ou un client MCP | [`docs/client-setup.md`](docs/client-setup.md) |
 | Comprendre l'owner-based isolation future | [`docs/owner-based-isolation.md`](docs/owner-based-isolation.md) |

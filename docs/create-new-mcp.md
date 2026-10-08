@@ -4,6 +4,12 @@
 
 Ce guide est volontairement générique. Les règles métier d'un MCP concret doivent rester dans le repo du MCP concret.
 
+Avant de choisir l'implémentation de ses données, suivre le
+[guide de conception](data-design.md) et compléter le canevas
+[`DESIGN/DATA_DESIGN.md`](../boilerplate/DESIGN/DATA_DESIGN.md) copié avec le
+gabarit. Le projet dérivé décide de son modèle et de son stockage ; ce canevas
+n'active aucun backend.
+
 ## 1. Créer le nouveau repo
 
 Options possibles :
