@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- SDK serveur MCP et types alignés sur2.2.0 pour corrigerCVE-2026-59951,
+- SDK serveur MCP et types alignés sur 2.2.0 pour corriger CVE-2026-59951,
   lock hashé ciblé et limites du gestionnaire stateful vérifiées sur l'app
-  réelle. Le client de compatibilité1.28.1 reste isolé et inchangé. Les limites
+  réelle. Le client de compatibilité 1.28.1 reste isolé et inchangé. Les limites
   amont actives ne valent pas dimensionnement de production. Refs #50.
 
 ## v2.0.8 — 2026-09-17 — The real-S3 layer that never ran

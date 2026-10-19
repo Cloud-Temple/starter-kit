@@ -5,7 +5,7 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ## Unreleased
 
-- SDK serveur et types MCP2.2.0 : correctifCVE-2026-59951 sur la rétention des
+- SDK serveur et types MCP 2.2.0 : correctif CVE-2026-59951 sur la rétention des
   sessions Streamable HTTP. Les limites amont actives ne sont pas un
   dimensionnement de production ; le contrat client v1 reste à conserver.
 
