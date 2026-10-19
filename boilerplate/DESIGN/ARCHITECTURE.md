@@ -263,9 +263,14 @@ l’AC interne n’y est pas installée, le déploiement monte un bundle PEM en
 lecture seule et renseigne `MCP_CLIENT_CA_BUNDLE`; un chemin absent échoue fermé.
 
 Le verrou exact des dépendances est dans `requirements.lock`, généré sous
-Python 3.11 avec hashes. Les versions exactes `mcp==2.1.1` et
-`mcp-types==2.1.1` sont revues dans la veille sécurité des dépendances afin de
+Python 3.11 avec hashes. Les versions exactes `mcp==2.2.0` et
+`mcp-types==2.2.0` sont revues dans la veille sécurité des dépendances afin de
 ne pas différer un correctif CVE upstream.
+
+Le gestionnaire Streamable HTTP stateful conserve les limites amont actives
+(10 000 sessions, délai idle 1 800 secondes). Le correctif CVE-2026-59951 borne
+la rétention ; ces défauts ne constituent pas un dimensionnement de production.
+Définir des valeurs propres au déploiement relève d'un suivi distinct.
 
 ### Politique de versions et de sécurité des images
 

@@ -25,11 +25,22 @@ from cli.client import MCPClient  # noqa: E402
 def test_mcp_v2_dependencies_are_exact_and_hash_locked():
     requirements = (ROOT / "boilerplate" / "requirements.txt").read_text(encoding="utf-8")
     lock = (ROOT / "boilerplate" / "requirements.lock").read_text(encoding="utf-8")
-    assert "mcp[cli]==2.1.1" in requirements
-    assert "mcp-types==2.1.1" in requirements
-    assert "mcp[cli]==2.1.1" in lock
-    assert "mcp-types==2.1.1" in lock
+    assert "mcp[cli]==2.2.0" in requirements
+    assert "mcp-types==2.2.0" in requirements
+    assert "mcp[cli]==2.2.0" in lock
+    assert "mcp-types==2.2.0" in lock
     assert "--hash=sha256:" in lock
+
+
+def test_product_streamable_http_sessions_are_bounded():
+    """The real kit app keeps the SDK's bounded stateful session manager."""
+    from mon_service.server import mcp
+
+    create_app()
+    manager = mcp.session_manager
+    assert manager.stateless is False
+    assert manager.max_sessions is not None and manager.max_sessions > 0
+    assert manager.session_idle_timeout is not None and manager.session_idle_timeout > 0
 
 
 async def _asgi_call(app, *, path, method="POST", headers=(), body=b""):
