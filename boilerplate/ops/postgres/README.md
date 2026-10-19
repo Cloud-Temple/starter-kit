@@ -191,7 +191,8 @@ empreintes publiques dans le dossier d'incident privé, sans clé ni credential.
 Si les preuves sont incomplètes, laisser UNKNOWN fermé et ne rien confirmer.
 
 L'exemple suivant est une **procédure manuelle future**, pas exécutée ici. Depuis
-la copie concernée avec son `.env` préparé, renseigner STATE, GENERATION et MODE.
+la copie concernée avec son `.env` préparé, renseigner STATE, GENERATION, MODE
+et INSPECTION_NONCE (nom unique fourni par l’opérateur pour chaque observation).
 `candidate` exige que current désigne déjà le candidat, sans écriture serveur ni
 restart ; `rollback` valide la génération précédente non expirée, bascule le
 lien relatif par `ln -s`/`mv -Tf`, puis redémarre **postgres seul une fois**. Si
@@ -200,7 +201,12 @@ En mode candidate, si le serveur ne présente pas encore le candidat, rester
 UNKNOWN ; après inspection et dans une nouvelle fenêtre explicitement décidée,
 le seul restart permis est `compose restart --timeout 15 postgres`, jamais une
 nouvelle exécution de renew. Ne pas automatiser ni rejouer cette procédure après
-un échec partiel : conserver aussi ses fichiers d'inspection uniques.
+un échec partiel : conserver aussi ses fichiers d'inspection uniques. Pour une
+seconde observation candidate après le restart distinct autorisé, fournir un
+nouvel INSPECTION_NONCE ; les preuves précédentes restent intactes. Le rollback
+refuse un current différent de la génération candidate de cette intention.
+Le contrôle hors réseau exige UID/GID mesurés et modes0700/0600 sur la génération
+retenue ; il ne réattribue pas aveuglément des fichiers d’une autre identité.
 
 ```python
 # À exécuter uniquement par l'opérateur autorisé, depuis la copie concernée.
@@ -212,10 +218,12 @@ from pathlib import Path
 STATE = "/absolute/private/state.json"
 GENERATION = "ops-2027-01"
 MODE = "candidate"  # choisir explicitement "rollback" pour le retour arrière
+INSPECTION_NONCE = "observation-1"  # observation suivante : nouveau nom, jamais écraser
 spec = importlib.util.spec_from_file_location("pg_operator", "ops/postgres/prepare.py")
 op = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(op)
 assert MODE in ("candidate", "rollback")
+assert re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", INSPECTION_NONCE)
 assert GENERATION != "initial" and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", GENERATION)
 s = op.load(STATE)
 p = Path(s["private"])
@@ -229,7 +237,7 @@ image = op.run(["docker", "inspect", "--format", "{{.Image}}", cid], capture=Tru
 assert re.fullmatch(r"sha256:[0-9a-f]{64}", image)
 pg_ids = op.measured_ids(image, "postgres")
 print("Inspection privée:", s["project"], cid, image, pg_ids, MODE)
-proof = p / (phase + "-inspection-" + MODE)
+proof = p / (phase + "-inspection-" + MODE + "-" + INSPECTION_NONCE)
 proof.mkdir(mode=0o700)  # exclusif : un échec conserve aussi cette inspection
 mounts = [(p / "server", "/server", MODE == "rollback"),
           (p / "ca/ca.crt", "/ca/ca.crt", False),
@@ -239,9 +247,15 @@ op.tls_job(s, mounts,
     'umask 077; cd /server; test -L current; current=$(readlink current); '
     '[[ "$current" =~ ^generation-[a-z0-9-]+$ ]]; '
     'target="generation-$1"; '
-    'if [ "$2" = rollback ]; then target=$(cat "previous-$target"); '
+    'if [ "$2" = rollback ]; then test "$current" = "$target"; '
+    'target=$(cat "previous-$target"); '
     'else test "$current" = "$target"; cmp "$target/server.crt" /candidate.crt; fi; '
     '[[ "$target" =~ ^generation-[a-z0-9-]+$ ]]; test -d "$target"; '
+    'for path in "$target" "$target/server.crt" "$target/server.key"; do '
+    'test "$(stat -c %u:%g "$path")" = "$5:$6"; done; '
+    'test "$(stat -c %a "$target")" = 700; '
+    'test "$(stat -c %a "$target/server.key")" = 600; '
+    'test "$(stat -c %a "$target/server.crt")" = 600; '
     'cmp ca.crt /ca/ca.crt; '
     'openssl x509 -in "$target/server.crt" -checkend 0 -noout; '
     'openssl verify -verify_hostname postgres -purpose sslserver '
@@ -253,7 +267,7 @@ op.tls_job(s, mounts,
     'chown "$3:$4" /proof/*; chmod 600 /proof/*; '
     'if [ "$2" = rollback ]; then test ! -e ".rollback-$1"; '
     'ln -s "$target" ".rollback-$1"; mv -Tf ".rollback-$1" current; fi',
-    GENERATION, MODE, os.getuid(), os.getgid(), user="0:0", root=True)
+    GENERATION, MODE, os.getuid(), os.getgid(), *pg_ids, user="0:0", root=True)
 # Le helper root ne possède que CHOWN/FOWNER/DAC_OVERRIDE, réseau none.
 if MODE == "rollback":
     op.run(args + ["restart", "--timeout", "15", "postgres"], env=env)
