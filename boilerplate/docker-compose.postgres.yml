@@ -16,9 +16,7 @@ services:
           create_host_path: false
       - ./ops/postgres/postgresql.conf:/etc/postgresql/standalone.conf:ro
       - ./ops/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
-    networks:
-      pg-net:
-        aliases: [postgres-wrong]
+    networks: [pg-net]
     mem_limit: 512m
     cpus: 1
     restart: "no"

@@ -123,7 +123,7 @@ def test_existing_private_destination_refused_before_docker(op, tmp_path, monkey
     (existing / "preserve").write_text("third-party-state")
     monkeypatch.setattr(op, "run", lambda *a, **k: pytest.fail("Docker must not be reached"))
     with pytest.raises(ValueError, match="New private destination"):
-        op.initialize(SimpleNamespace(private=str(existing)))
+        op.initialize(SimpleNamespace(private=str(existing), ca_days=3650, server_days=365))
     assert (existing / "preserve").read_text() == "third-party-state"
 
 
@@ -133,3 +133,87 @@ def test_example_product_hook_fails_closed_without_docker():
                             capture_output=True, text=True, timeout=5)
     assert result.returncode == 1
     assert "hook missing" in result.stderr
+
+
+def test_persistent_tls_has_bounded_configurable_lifetimes(op):
+    assert op.validate_ttls(3650, 365) == (3650, 365)
+    for ca, server in ((0, 1), (30, 30), (3650, -1), (3650, 826), (36501, 365)):
+        with pytest.raises(ValueError):
+            op.validate_ttls(ca, server)
+
+
+@pytest.fixture
+def renewal(op, tmp_path, monkeypatch):
+    state = dict(private=str(tmp_path), root="/copy", project="starter48-test-src", env={}, operator_image="local-infra")
+    calls = []
+    def command(argv, **kwargs):
+        calls.append(("command", argv))
+        if "ps" in argv:
+            return "a" * 64
+        if "inspect" in argv:
+            return "sha256:" + "b" * 64
+        return ""
+    monkeypatch.setattr(op, "run", command)
+    monkeypatch.setattr(op, "measured_ids", lambda image, account: (1234, 1235))
+    def tls(state, mounts, script, *args, **kwargs):
+        calls.append(("tls", mounts, script, args, kwargs))
+    monkeypatch.setattr(op, "tls_job", tls)
+    return state, calls
+
+
+def test_renewal_ca_check_new_pair_staging_then_only_pg_restart(op, renewal):
+    state, calls = renewal
+    op.renew_server_cert(state, "operator-2026", 365)
+    jobs = [c for c in calls if c[0] == "tls"]
+    assert "-checkend" in jobs[0][2] and jobs[0][3] == (366 * 86400,)
+    assert jobs[0][1] == [(Path(state["private"]) / "ca", "/ca", False)]
+    assert "-set_serial" in jobs[1][2] and "verify_hostname postgres" in jobs[1][2]
+    assert jobs[2][3] == ("generation-operator-2026", 1234, 1235)
+    assert "mv -Tf" in jobs[2][2] and "previous-$1" in jobs[2][2]
+    restart, = [c for c in calls if c[0] == "command" and "restart" in c[1]]
+    assert restart[1][-4:] == ["restart", "--timeout", "15", "postgres"]
+    assert calls.index(jobs[2]) < calls.index(restart) < calls.index(jobs[3])
+    assert "s_client" in jobs[3][2] and "cmp /tmp/served.der" in jobs[3][2]
+    assert (Path(state["private"]) / "cert-renew-operator-2026.confirmed").is_file()
+    with pytest.raises(FileExistsError):
+        op.renew_server_cert(state, "operator-2026", 365)
+
+
+def test_expired_or_too_short_ca_refuses_before_intent_or_restart(op, renewal, monkeypatch):
+    state, calls = renewal
+    def expired(*args, **kwargs):
+        raise RuntimeError("CA check failed")
+    monkeypatch.setattr(op, "tls_job", expired)
+    with pytest.raises(RuntimeError):
+        op.renew_server_cert(state, "expired", 365)
+    assert not list(Path(state["private"]).glob("*.intent"))
+    assert not any("restart" in c[1] for c in calls if c[0] == "command")
+
+
+@pytest.mark.parametrize("fail_step", [2, 3, 4])
+def test_partial_renewal_is_unknown_keeps_intent_and_blocks_replay(op, renewal, monkeypatch, fail_step):
+    state, calls = renewal
+    count = 0
+    def fail(*args, **kwargs):
+        nonlocal count
+        count += 1
+        if count == fail_step:
+            raise RuntimeError("phase uncertain")
+    monkeypatch.setattr(op, "tls_job", fail)
+    with pytest.raises(RuntimeError):
+        op.renew_server_cert(state, "partial", 365)
+    assert (Path(state["private"]) / "cert-renew-partial.intent").is_file()
+    assert not (Path(state["private"]) / "cert-renew-partial.confirmed").exists()
+    with pytest.raises(ValueError, match="Previous renewal uncertain"):
+        op.renew_server_cert(state, "another-generation", 365)
+
+
+def test_renewal_failure_cli_never_prints_secret(op, monkeypatch, capsys):
+    monkeypatch.setattr(op.sys, "argv", ["prepare.py", "renew-server-cert", "--state", "/private/state.json", "--generation", "failed"])
+    monkeypatch.setattr(op, "load", lambda _: {})
+    def fail(*args):
+        raise RuntimeError("do-not-expose-private-key")
+    monkeypatch.setattr(op, "renew_server_cert", fail)
+    with pytest.raises(SystemExit):
+        op.main()
+    assert "do-not-expose" not in capsys.readouterr().err

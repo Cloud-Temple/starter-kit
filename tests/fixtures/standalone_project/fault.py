@@ -26,7 +26,9 @@ def fault(state, kind):
     script = ('umask 077; cp /healthy/* /fault/; ' + commands[kind] +
               '; chown -R "$1:$2" /fault; chmod 700 /fault; find /fault -type f -exec chmod 600 {} +')
     prepare.run(["docker", "run", "--rm", "--network", "none", "--memory", "512m", "--cpus", "1",
-                 "--user", "0:0", "--mount", f"type=bind,src={state['private']}/app,dst=/healthy,readonly",
+                 "--user", "0:0", "--cap-drop", "ALL", "--cap-add", "CHOWN",
+                 "--cap-add", "FOWNER", "--cap-add", "DAC_OVERRIDE",
+                 "--mount", f"type=bind,src={state['private']}/app,dst=/healthy,readonly",
                  "--mount", f"type=bind,src={target},dst=/fault", "--entrypoint", "bash",
                  state["operator_image"], "-euc", script, "fault", *map(str, state["app_ids"])])
     env = product_env(state, "install")

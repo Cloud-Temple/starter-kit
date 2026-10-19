@@ -68,8 +68,8 @@ les permissions. Le parent RW des archives appartient aussi à l'UID du job.
 PG a son réseau privé `pg-net`, sans port publié, et son volume nommé propre au
 projet. Les opérateurs utilisent TCP `postgres:5432`, TLS `verify-full`, SAN
 `postgres`. Aucun psql hôte/socket d'administration comme contournement.
-`postgres-wrong` est un alias de qualification qui résout le même serveur mais
-n'est pas couvert par le SAN. L'entrypoint initialise sa base système neuve ;
+L'alias `postgres-wrong` est ajouté seulement par le témoin de qualification.
+L'entrypoint initialise sa base système neuve ;
 aucun DDL produit n'est placé dans `docker-entrypoint-initdb.d`.
 
 ## Préparer, installer et démarrer
@@ -80,6 +80,13 @@ distincte. Ne pas inventer un RepoDigest pour une image construite localement :
 conserver le tag unique du run et vérifier le véritable `.Id` par
 `docker image inspect`. Pour le témoin Tools, utiliser la recette hors gabarit
 du dépôt source ; un autre produit fournit son propre raccord.
+
+Copier `.env.example` vers `.env` et configurer le produit **avant même
+`start-postgres`** : le Compose de base exige cet env_file pour toutes ses
+commandes. PostgreSQL conserve `restart: "no"` par choix opérateur : après
+reboot/daemon restart, démarrer explicitement la base puis vérifier TLS et
+readiness avant la reprise applicative ; l'app peut déjà être relancée par sa
+politique propre. Aucun service/port supplémentaire n'est exposé.
 
 ```sh
 # Depuis la copie ; builder plafonné par l'opérateur, jamais simultané au runtime.
@@ -132,6 +139,57 @@ les mots de passe. Utiliser base+client+local, les montages du produit et ses
 procédures usuelles. Vérifier dans le conteneur les UID/modes/RO et la lecture
 des trois fichiers sans en imprimer le contenu. Seules l'écriture publique
 confirmée puis sa lecture attestent le résultat métier.
+
+## Durées TLS et renouvellement opérateur
+
+Ce parcours reste utilisable pour un produit persistant. `init --ca-days 3650
+--server-days 365` fixe les défauts (CA dix ans, serveur un an) ; fournir
+explicitement d'autres durées selon la politique d'exploitation. Serveur1–825jours,
+CA au plus36500jours et strictement plus longue que le serveur. CN de la CA :
+`standalone-ca`. SAN serveur : `postgres`. Surveiller les expirations et agir
+avant l'échéance ; il n'y a ni renouvellement automatique ni rotation CA.
+
+```sh
+python3 ops/postgres/prepare.py renew-server-cert \
+  --state /absolute/private/state.json --generation ops-2027-01 --server-days 365
+```
+
+Action explicite, sous fenêtre opérateur : mesurer l'UID/GID de l'image du
+conteneurPG réellement en cours ; vérifier la CA existante et au moins la durée
+serveur demandée **plus un jour** de validité restante. CA expirée/trop courte :
+refus sans nouvelle intention ni redémarrage, pas de CA de secours. Préparer
+une nouvelle clé/CSR/feuille dans un répertoire privé unique, vérifier chaîne,
+SAN et correspondance clé/certificat avant publication. Le helper borné stage
+ces seuls fichiers sous l'UIDPG mesuré. Les générations initiale et précédentes
+restent privées et intactes ; une bascule atomique de `server/current` sélectionne
+le couple clé/certificat, sans remplacer le répertoire déjà monté par Docker.
+Redémarrer **seulement postgres**, sans port ni exposition nouveaux, puis faire
+une connexionTLS neuve vérifiée et comparer le certificat servi au candidat.
+Un fichierconfirmed n'est écrit qu'après cette observation ; readinessproduit
+et lecture publique restent à contrôler séparément.
+
+Échec/timeout après intention : étatUNKNOWN, intention et candidats conservés,
+aucun replay automatique, même avec un autre nom de génération. Inspecter le
+liencurrent, le fichier `server/previous-generation-<nom>` et l'état/certificat
+réellement servi sous identité opérateur autorisée. L'absence de confirmation
+ne prouve pas l'absence de bascule. Retour arrière manuel : vérifier l'ancien
+couple et sa validité, rétablir atomiquement current vers cette génération
+retenue, redémarrerpostgres seul, puis TLS/readiness/lecture publique. Si l'ancien
+certificat est expiré, ce retour n'est pas valide : conserver les données et
+diagnostiquer avec la CA existante. Réconcilier/documenter l'intention avant une
+nouvelle opération ; ne jamais la supprimer pour forcer un retry. La rotation
+de CA nécessite une procédure distincte et n'est pas fournie ici.
+
+Fin de provisioning : fermer l'accèsLOGIN bootstrap/provisionneur par
+l'autorité opérateur existante **après avoir vérifié un accès de récupération
+indépendant**, et contrôler son refus frais. Ne pas laisser `provision*` et
+`issue-*` utilisables comme accès courants ; les conserver dans le stockage
+opérateur privé uniquement le temps nécessaire à résoudre unUNKNOWN, puis
+retirer leurs transports selon le fournisseur applicable. Ne jamais monter ces
+fichiers dans l'app ou supprimer le seul accès permettant la récupération.
+Le rôlebackup du témoin est **one-shot** : sa révocation ferme cette campagne.
+Un backup suivant exige une nouvelle fenêtre et une nouvelle identité/scopes
+via le provisionneur autorisé ; aucune réactivation automatique n'est offerte.
 
 ## Incertitude, arrêt, reprise et restauration
 

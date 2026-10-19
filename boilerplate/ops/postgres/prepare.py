@@ -19,6 +19,84 @@ BASE_FILES = ("docker-compose.yml", "docker-compose.pg-client.yml",
               "docker-compose.postgres.yml", "docker-compose.pg-operator.yml")
 
 
+def validate_ttls(ca_days, server_days):
+    if not (1 <= server_days <= 825 and server_days < ca_days <= 36500):
+        raise ValueError("CA lifetime must exceed server lifetime (server 1..825 days, CA <=36500)")
+    return ca_days, server_days
+
+
+def tls_job(state, mounts, script, *args, user=None, network="none", root=False):
+    command = ["docker", "run", "--rm", "--network", network, "--memory", "512m", "--cpus", "1",
+               "--user", user or f"{os.getuid()}:{os.getgid()}", "--cap-drop", "ALL"]
+    if root:
+        for cap in ("CHOWN", "FOWNER", "DAC_OVERRIDE"):
+            command += ["--cap-add", cap]
+    for source, target, writable in mounts:
+        command += ["--mount", f"type=bind,src={source},dst={target}" + ("" if writable else ",readonly")]
+    return run(command + ["--entrypoint", "bash", state["operator_image"], "-euc", script,
+                          "tls-operation", *map(str, args)])
+
+
+def renew_server_cert(state, generation, days):
+    validate_ttls(36500, days)
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", generation):
+        raise ValueError("Unique bounded certificate generation required")
+    p = Path(state["private"])
+    for intent in p.glob("cert-renew-*.intent"):
+        if not intent.with_suffix(".confirmed").is_file():
+            raise ValueError("Previous renewal uncertain; reconcile before another generation")
+    args, env = compose(state)
+    cid = run(args + ["ps", "--quiet", "postgres"], capture=True, env=env).strip()
+    if not re.fullmatch(r"[0-9a-f]{12,64}", cid):
+        raise ValueError("One running owned PostgreSQL container required")
+    image = run(["docker", "inspect", "--format", "{{.Image}}", cid], capture=True).strip()
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image):
+        raise ValueError("PostgreSQL ImageID required")
+    uid, gid = measured_ids(image, "postgres")
+    # Refuse an expired CA, or a requested leaf outliving it. Never rotate the CA here.
+    ca_mount = [(p / "ca", "/ca", False)]
+    tls_job(state, ca_mount,
+            'openssl x509 -in /ca/ca.crt -checkend "$1" -noout; '
+            'openssl verify -CAfile /ca/ca.crt /ca/ca.crt', days * 86400 + 86400)
+    phase = "cert-renew-" + generation
+    save(state, phase)
+    candidate = p / phase
+    candidate.mkdir(mode=0o700)
+    # Readonly CA, explicit random serial, new leaf key, no CA serial-file mutation.
+    tls_job(state, ca_mount + [(candidate, "/new", True)],
+            'umask 077; cd /new; openssl req -newkey rsa:3072 -nodes -subj /CN=postgres '
+            '-keyout server.key -out server.csr; '
+            'printf "subjectAltName=DNS:postgres\\nextendedKeyUsage=serverAuth\\n" > extensions; '
+            'openssl x509 -req -in server.csr -CA /ca/ca.crt -CAkey /ca/ca.key '
+            '-set_serial "$2" -days "$1" -extfile extensions -out server.crt; '
+            'openssl verify -verify_hostname postgres -purpose sslserver -CAfile /ca/ca.crt server.crt; '
+            'cmp <(openssl x509 -in server.crt -pubkey -noout) <(openssl pkey -in server.key -pubout)',
+            days, "0x" + secrets.token_hex(16))
+    # The directory bind remains unchanged. Switch ONE relative symlink atomically,
+    # so cert and key always select the same retained generation. Old generation stays.
+    tls_job(state, [(candidate, "/new", False), (p / "server", "/server", True)],
+            'umask 077; cd /server; test -L current; old=$(readlink current); '
+            '[[ "$old" =~ ^generation-[a-z0-9-]+$ ]]; test -d "$old"; '
+            'test ! -e "$1"; mkdir -m 700 "$1"; '
+            'cp /new/server.crt /new/server.key "$1/"; '
+            'chown -R "$2:$3" "$1"; chmod 600 "$1/"*; '
+            'openssl verify -verify_hostname postgres -purpose sslserver -CAfile ca.crt "$1/server.crt"; '
+            'printf "%s\\n" "$old" > "previous-$1"; chmod 600 "previous-$1"; '
+            'ln -s "$1" ".next-$1"; mv -Tf ".next-$1" current',
+            "generation-" + generation, uid, gid, user="0:0", root=True)
+    run(args + ["restart", "--timeout", "15", "postgres"], env=env)
+    # Real fresh TLS connection is part of the future native action; no SQL/auth bypass.
+    # Compare the actually served leaf to the verified candidate, not only exit status.
+    tls_job(state, ca_mount + [(candidate, "/new", False)],
+            'timeout 20 openssl s_client -connect postgres:5432 -starttls postgres '
+            '-CAfile /ca/ca.crt -verify_hostname postgres -verify_return_error </dev/null '
+            '2>/dev/null | openssl x509 -outform DER > /tmp/served.der; '
+            'openssl x509 -in /new/server.crt -outform DER > /tmp/expected.der; '
+            'cmp /tmp/served.der /tmp/expected.der', network=state["project"] + "_pg-net")
+    write_private(p / (phase + ".confirmed"), "new-leaf-served-with-verified-TLS\n")
+    print('{"status":"server_certificate_renewed","ca_rotated":false}')
+
+
 def identifier(value):
     if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", value):
         raise ValueError("Invalid SQL identifier")
@@ -126,6 +204,7 @@ def connection(directory, ca, role, password, database, uid, gid, state, *, new_
 
 
 def initialize(args):
+    ca_days, server_days = validate_ttls(args.ca_days, args.server_days)
     root = Path.cwd().resolve()
     for file in BASE_FILES:
         if not (root / file).is_file():
@@ -153,7 +232,7 @@ def initialize(args):
     state = dict(root=str(root), private=str(p), project=args.project, database=database,
                  roles=roles, app_image=app_image, job_image=job_image,
                  operator_image=operator_image, app_ids=app_ids, job_ids=job_ids,
-                 operator_ids=operator_ids, pg_ids=pg_ids)
+                 operator_ids=operator_ids, pg_ids=pg_ids, ca_days=ca_days, server_days=server_days)
     state["env"] = dict(PG_PRIVATE_DIR=str(p), PG_CLIENT_PRIVATE_DIR=str(p / "app"),
                         PG_OPERATOR_IMAGE=operator_image, PG_DATABASE_NAME=database,
                         PG_JOB_PRIVATE_DIR=str(p / "provision"),
@@ -166,17 +245,23 @@ def initialize(args):
     run(["docker", "run", "--rm", "--network", "none", "--memory", "512m", "--cpus", "1",
          "--user", f"{os.getuid()}:{os.getgid()}", "--mount", f"type=bind,src={ca_dir},dst=/pki",
          "--entrypoint", "bash", operator_image, "-euc",
-         'umask 077; cd /pki; openssl req -x509 -newkey rsa:3072 -nodes -days 30 '
-         '-subj /CN=standalone-test-ca -keyout ca.key -out ca.crt; '
+         'umask 077; cd /pki; openssl req -x509 -newkey rsa:3072 -nodes -days "$1" '
+         '-subj /CN=standalone-ca -keyout ca.key -out ca.crt; '
          'openssl req -newkey rsa:3072 -nodes -subj /CN=postgres -keyout server.key -out server.csr; '
          'printf "subjectAltName=DNS:postgres\\nextendedKeyUsage=serverAuth\\n" > extensions; '
          'openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial '
-         '-days 7 -extfile extensions -out server.crt'])
+         '-days "$2" -extfile extensions -out server.crt; '
+         'openssl verify -verify_hostname postgres -purpose sslserver -CAfile ca.crt server.crt',
+         "initial-tls", str(ca_days), str(server_days)])
     ca = (ca_dir / "ca.crt").read_text()
     server = p / "server"
     server.mkdir(mode=0o700)
-    for name in ("ca.crt", "server.crt", "server.key"):
-        write_private(server / name, (ca_dir / name).read_text())
+    initial = server / "generation-initial"
+    initial.mkdir(mode=0o700)
+    write_private(server / "ca.crt", ca)
+    for name in ("server.crt", "server.key"):
+        write_private(initial / name, (ca_dir / name).read_text())
+    (server / "current").symlink_to("generation-initial", target_is_directory=True)
     bootstrap = secrets.token_hex(32)
     write_private(server / "bootstrap.password", bootstrap)
     stage(state, server, *pg_ids)
@@ -216,6 +301,12 @@ def main():
     for field in ("private", "project", "database", "owner", "app", "installer", "backup", "restore",
                   "app-image", "operator-image", "job-image"):
         init.add_argument("--" + field, required=True)
+    init.add_argument("--ca-days", type=int, default=3650)
+    init.add_argument("--server-days", type=int, default=365)
+    renew = sub.add_parser("renew-server-cert", help="explicit new server certificate under SAME CA")
+    renew.add_argument("--state", required=True)
+    renew.add_argument("--generation", required=True)
+    renew.add_argument("--server-days", type=int, default=365)
     for action in ("start-postgres", "provision", "install-product", "identity", "stop"):
         command = sub.add_parser(action)
         command.add_argument("--state", required=True)
@@ -225,7 +316,9 @@ def main():
             initialize(args)
             return
         state = load(args.state)
-        if args.action == "start-postgres":
+        if args.action == "renew-server-cert":
+            renew_server_cert(state, args.generation, args.server_days)
+        elif args.action == "start-postgres":
             # New state only. Existing volume is never adopted by a second initialization.
             save(state, "start-postgres")
             compose_args, env = compose(state)

@@ -1,4 +1,8 @@
 services:
+  postgres:
+    networks:
+      pg-net:
+        aliases: [postgres-wrong]
   waf:
     image: ${TOOLS_WAF_IMAGE:?image built from the copied unchanged WAF Dockerfile}
     mem_limit: 256m
