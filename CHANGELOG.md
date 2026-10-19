@@ -11,6 +11,11 @@
   par défaut. Aucun backend applicatif distribué. Recette de qualification FILES
   publique distincte du gabarit ; qualification native à effectuer avant livraison.
 
+- SDK serveur MCP et types alignés sur 2.2.0 pour corriger CVE-2026-59951,
+  lock hashé ciblé et limites du gestionnaire stateful vérifiées sur l'app
+  réelle. Le client de compatibilité 1.28.1 reste isolé et inchangé. Les limites
+  amont actives ne valent pas dimensionnement de production. Refs #50.
+
 ## v2.0.8 — 2026-09-17 — The real-S3 layer that never ran
 
 ### Fixed
