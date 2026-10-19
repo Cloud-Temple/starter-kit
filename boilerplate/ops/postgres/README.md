@@ -151,7 +151,8 @@ avant l'échéance ; il n'y a ni renouvellement automatique ni rotation CA.
 
 ```sh
 python3 ops/postgres/prepare.py renew-server-cert \
-  --state /absolute/private/state.json --generation ops-2027-01 --server-days 365
+  --state /absolute/private/state.json --generation ops-2027-01 --server-days 365 \
+  --readiness-seconds 30
 ```
 
 Action explicite, sous fenêtre opérateur : mesurer l'UID/GID de l'image du
@@ -163,22 +164,117 @@ SAN et correspondance clé/certificat avant publication. Le helper borné stage
 ces seuls fichiers sous l'UIDPG mesuré. Les générations initiale et précédentes
 restent privées et intactes ; une bascule atomique de `server/current` sélectionne
 le couple clé/certificat, sans remplacer le répertoire déjà monté par Docker.
-Redémarrer **seulement postgres**, sans port ni exposition nouveaux, puis faire
-une connexionTLS neuve vérifiée et comparer le certificat servi au candidat.
+Redémarrer **seulement postgres**, sans port ni exposition nouveaux. Attendre
+au plus six observations `pg_isready` PG17 (timeout2s, intervalles2s), sous un
+délai global `--readiness-seconds` configurable5–90s, défaut30s. Cette attente
+répète uniquement une observation : aucune signature, écriture ou restart
+supplémentaire. Puis une seule connexion TLS neuve vérifiée compare la feuille
+servie au candidat. Les sondes ne montent que le certificat CA RO ; seule la
+signature hors réseau (`network none`) reçoit le dossier contenant sa clé.
 Un fichierconfirmed n'est écrit qu'après cette observation ; readinessproduit
 et lecture publique restent à contrôler séparément.
 
-Échec/timeout après intention : étatUNKNOWN, intention et candidats conservés,
-aucun replay automatique, même avec un autre nom de génération. Inspecter le
-liencurrent, le fichier `server/previous-generation-<nom>` et l'état/certificat
-réellement servi sous identité opérateur autorisée. L'absence de confirmation
-ne prouve pas l'absence de bascule. Retour arrière manuel : vérifier l'ancien
-couple et sa validité, rétablir atomiquement current vers cette génération
-retenue, redémarrerpostgres seul, puis TLS/readiness/lecture publique. Si l'ancien
-certificat est expiré, ce retour n'est pas valide : conserver les données et
-diagnostiquer avec la CA existante. Réconcilier/documenter l'intention avant une
-nouvelle opération ; ne jamais la supprimer pour forcer un retry. La rotation
-de CA nécessite une procédure distincte et n'est pas fournie ici.
+Échec/timeout après intention : état UNKNOWN, intention et candidats conservés,
+aucun replay automatique, même avec un autre nom de génération. L'absence de
+confirmation ne prouve pas l'absence de bascule. `initial` est réservé et refusé
+avant toute intention. Une seule fenêtre opérateur, sans commandes concurrentes.
+Les clés candidates dans `cert-renew-<nom>` et les générations retenues restent
+privées (répertoires0700, fichiers0600), jamais copiées dans les preuves publiques.
+
+### Réconcilier UNKNOWN ou revenir à la génération précédente
+
+Ne jamais fabriquer un `.confirmed` avec `touch`, ni supprimer une intention.
+L'opérateur autorisé inspecte d'abord state/projet, CID et ImageID PG, UID/GID
+mesurés, lien relatif `current`, `previous-generation-<nom>`, même CA, validité,
+couple clé/feuille et feuille réellement servie. Documenter ces identités et les
+empreintes publiques dans le dossier d'incident privé, sans clé ni credential.
+Si les preuves sont incomplètes, laisser UNKNOWN fermé et ne rien confirmer.
+
+L'exemple suivant est une **procédure manuelle future**, pas exécutée ici. Depuis
+la copie concernée avec son `.env` préparé, renseigner STATE, GENERATION et MODE.
+`candidate` exige que current désigne déjà le candidat, sans écriture serveur ni
+restart ; `rollback` valide la génération précédente non expirée, bascule le
+lien relatif par `ln -s`/`mv -Tf`, puis redémarre **postgres seul une fois**. Si
+l'ancien certificat est expiré, arrêt : aucune génération/CA de secours.
+En mode candidate, si le serveur ne présente pas encore le candidat, rester
+UNKNOWN ; après inspection et dans une nouvelle fenêtre explicitement décidée,
+le seul restart permis est `compose restart --timeout 15 postgres`, jamais une
+nouvelle exécution de renew. Ne pas automatiser ni rejouer cette procédure après
+un échec partiel : conserver aussi ses fichiers d'inspection uniques.
+
+```python
+# À exécuter uniquement par l'opérateur autorisé, depuis la copie concernée.
+import importlib.util
+import os
+import re
+from pathlib import Path
+
+STATE = "/absolute/private/state.json"
+GENERATION = "ops-2027-01"
+MODE = "candidate"  # choisir explicitement "rollback" pour le retour arrière
+spec = importlib.util.spec_from_file_location("pg_operator", "ops/postgres/prepare.py")
+op = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(op)
+assert MODE in ("candidate", "rollback")
+assert GENERATION != "initial" and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", GENERATION)
+s = op.load(STATE)
+p = Path(s["private"])
+phase = "cert-renew-" + GENERATION
+assert (p / (phase + ".intent")).is_file()
+assert not (p / (phase + ".confirmed")).exists()
+args, env = op.compose(s)
+cid = op.run(args + ["ps", "--quiet", "postgres"], capture=True, env=env).strip()
+assert re.fullmatch(r"[0-9a-f]{12,64}", cid)
+image = op.run(["docker", "inspect", "--format", "{{.Image}}", cid], capture=True).strip()
+assert re.fullmatch(r"sha256:[0-9a-f]{64}", image)
+pg_ids = op.measured_ids(image, "postgres")
+print("Inspection privée:", s["project"], cid, image, pg_ids, MODE)
+proof = p / (phase + "-inspection-" + MODE)
+proof.mkdir(mode=0o700)  # exclusif : un échec conserve aussi cette inspection
+mounts = [(p / "server", "/server", MODE == "rollback"),
+          (p / "ca/ca.crt", "/ca/ca.crt", False),
+          (p / phase / "server.crt", "/candidate.crt", False),
+          (proof, "/proof", True)]
+op.tls_job(s, mounts,
+    'umask 077; cd /server; test -L current; current=$(readlink current); '
+    '[[ "$current" =~ ^generation-[a-z0-9-]+$ ]]; '
+    'target="generation-$1"; '
+    'if [ "$2" = rollback ]; then target=$(cat "previous-$target"); '
+    'else test "$current" = "$target"; cmp "$target/server.crt" /candidate.crt; fi; '
+    '[[ "$target" =~ ^generation-[a-z0-9-]+$ ]]; test -d "$target"; '
+    'cmp ca.crt /ca/ca.crt; '
+    'openssl x509 -in "$target/server.crt" -checkend 0 -noout; '
+    'openssl verify -verify_hostname postgres -purpose sslserver '
+    '-CAfile /ca/ca.crt "$target/server.crt"; '
+    'cmp <(openssl x509 -in "$target/server.crt" -pubkey -noout) '
+    '<(openssl pkey -in "$target/server.key" -pubout); '
+    'cp "$target/server.crt" /proof/expected.crt; '
+    'printf "%s\n" "$target" > /proof/generation; '
+    'chown "$3:$4" /proof/*; chmod 600 /proof/*; '
+    'if [ "$2" = rollback ]; then test ! -e ".rollback-$1"; '
+    'ln -s "$target" ".rollback-$1"; mv -Tf ".rollback-$1" current; fi',
+    GENERATION, MODE, os.getuid(), os.getgid(), user="0:0", root=True)
+# Le helper root ne possède que CHOWN/FOWNER/DAC_OVERRIDE, réseau none.
+if MODE == "rollback":
+    op.run(args + ["restart", "--timeout", "15", "postgres"], env=env)
+op.wait_postgres(s, 30)
+op.tls_job(s, [(p / "ca/ca.crt", "/ca/ca.crt", False),
+               (proof / "expected.crt", "/expected.crt", False)],
+    'timeout 20 openssl s_client -connect postgres:5432 -starttls postgres '
+    '-CAfile /ca/ca.crt -verify_hostname postgres -verify_return_error </dev/null '
+    '2>/dev/null | openssl x509 -outform DER > /tmp/served.der; '
+    'openssl x509 -in /expected.crt -outform DER > /tmp/expected.der; '
+    'cmp /tmp/served.der /tmp/expected.der', network=s["project"] + "_pg-net")
+# Ici seulement : feuille servie exacte, chaîne/nom/validité/couple vérifiés.
+# write_private = opérateur hôte courant, 0600, O_EXCL|O_NOFOLLOW.
+op.write_private(p / (phase + ".confirmed"),
+                 "operator-reconciled-" + MODE + "-verified-served-leaf\n")
+```
+
+Conserver le dossier d'inspection et l'intention, confirmer séparément readiness
+produit et lecture publique. La confirmation marque la résolution documentée
+(candidate ou rollback), jamais un succès métier implicite. La rotation de CA
+requiert une procédure distincte et reste hors périmètre.
 
 Fin de provisioning : fermer l'accèsLOGIN bootstrap/provisionneur par
 l'autorité opérateur existante **après avoir vérifié un accès de récupération

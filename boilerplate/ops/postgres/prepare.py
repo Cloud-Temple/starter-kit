@@ -37,10 +37,22 @@ def tls_job(state, mounts, script, *args, user=None, network="none", root=False)
                           "tls-operation", *map(str, args)])
 
 
-def renew_server_cert(state, generation, days):
+def wait_postgres(state, seconds):
+    # Observation only: at most six PG17 readiness probes within one hard deadline.
+    # No retry of signing, staging, restart, or TLS leaf comparison.
+    tls_job(state, [],
+            "timeout \"$1\" bash -euc 'for attempt in 1 2 3 4 5 6; do "
+            'if pg_isready -h postgres -p 5432 -t 2; then exit 0; fi; '
+            'if [ "$attempt" -lt 6 ]; then sleep 2; fi; '
+            "done; exit 1'", seconds, network=state["project"] + "_pg-net")
+
+
+def renew_server_cert(state, generation, days, readiness_seconds=30):
     validate_ttls(36500, days)
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", generation):
+    if generation == "initial" or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", generation):
         raise ValueError("Unique bounded certificate generation required")
+    if not 5 <= readiness_seconds <= 90:
+        raise ValueError("Readiness deadline must be 5..90 seconds")
     p = Path(state["private"])
     for intent in p.glob("cert-renew-*.intent"):
         if not intent.with_suffix(".confirmed").is_file():
@@ -54,7 +66,7 @@ def renew_server_cert(state, generation, days):
         raise ValueError("PostgreSQL ImageID required")
     uid, gid = measured_ids(image, "postgres")
     # Refuse an expired CA, or a requested leaf outliving it. Never rotate the CA here.
-    ca_mount = [(p / "ca", "/ca", False)]
+    ca_mount = [(p / "ca/ca.crt", "/ca/ca.crt", False)]
     tls_job(state, ca_mount,
             'openssl x509 -in /ca/ca.crt -checkend "$1" -noout; '
             'openssl verify -CAfile /ca/ca.crt /ca/ca.crt', days * 86400 + 86400)
@@ -63,7 +75,7 @@ def renew_server_cert(state, generation, days):
     candidate = p / phase
     candidate.mkdir(mode=0o700)
     # Readonly CA, explicit random serial, new leaf key, no CA serial-file mutation.
-    tls_job(state, ca_mount + [(candidate, "/new", True)],
+    tls_job(state, [(p / "ca", "/ca", False), (candidate, "/new", True)],
             'umask 077; cd /new; openssl req -newkey rsa:3072 -nodes -subj /CN=postgres '
             '-keyout server.key -out server.csr; '
             'printf "subjectAltName=DNS:postgres\\nextendedKeyUsage=serverAuth\\n" > extensions; '
@@ -85,9 +97,10 @@ def renew_server_cert(state, generation, days):
             'ln -s "$1" ".next-$1"; mv -Tf ".next-$1" current',
             "generation-" + generation, uid, gid, user="0:0", root=True)
     run(args + ["restart", "--timeout", "15", "postgres"], env=env)
+    wait_postgres(state, readiness_seconds)
     # Real fresh TLS connection is part of the future native action; no SQL/auth bypass.
     # Compare the actually served leaf to the verified candidate, not only exit status.
-    tls_job(state, ca_mount + [(candidate, "/new", False)],
+    tls_job(state, ca_mount + [(candidate / "server.crt", "/new/server.crt", False)],
             'timeout 20 openssl s_client -connect postgres:5432 -starttls postgres '
             '-CAfile /ca/ca.crt -verify_hostname postgres -verify_return_error </dev/null '
             '2>/dev/null | openssl x509 -outform DER > /tmp/served.der; '
@@ -307,6 +320,7 @@ def main():
     renew.add_argument("--state", required=True)
     renew.add_argument("--generation", required=True)
     renew.add_argument("--server-days", type=int, default=365)
+    renew.add_argument("--readiness-seconds", type=int, default=30)
     for action in ("start-postgres", "provision", "install-product", "identity", "stop"):
         command = sub.add_parser(action)
         command.add_argument("--state", required=True)
@@ -317,7 +331,7 @@ def main():
             return
         state = load(args.state)
         if args.action == "renew-server-cert":
-            renew_server_cert(state, args.generation, args.server_days)
+            renew_server_cert(state, args.generation, args.server_days, args.readiness_seconds)
         elif args.action == "start-postgres":
             # New state only. Existing volume is never adopted by a second initialization.
             save(state, "start-postgres")

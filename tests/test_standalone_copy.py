@@ -166,14 +166,15 @@ def test_renewal_ca_check_new_pair_staging_then_only_pg_restart(op, renewal):
     op.renew_server_cert(state, "operator-2026", 365)
     jobs = [c for c in calls if c[0] == "tls"]
     assert "-checkend" in jobs[0][2] and jobs[0][3] == (366 * 86400,)
-    assert jobs[0][1] == [(Path(state["private"]) / "ca", "/ca", False)]
+    assert jobs[0][1] == [(Path(state["private"]) / "ca/ca.crt", "/ca/ca.crt", False)]
     assert "-set_serial" in jobs[1][2] and "verify_hostname postgres" in jobs[1][2]
     assert jobs[2][3] == ("generation-operator-2026", 1234, 1235)
     assert "mv -Tf" in jobs[2][2] and "previous-$1" in jobs[2][2]
     restart, = [c for c in calls if c[0] == "command" and "restart" in c[1]]
     assert restart[1][-4:] == ["restart", "--timeout", "15", "postgres"]
-    assert calls.index(jobs[2]) < calls.index(restart) < calls.index(jobs[3])
-    assert "s_client" in jobs[3][2] and "cmp /tmp/served.der" in jobs[3][2]
+    assert calls.index(jobs[2]) < calls.index(restart) < calls.index(jobs[3]) < calls.index(jobs[4])
+    assert "pg_isready" in jobs[3][2] and jobs[3][3] == (30,)
+    assert "s_client" in jobs[4][2] and "cmp /tmp/served.der" in jobs[4][2]
     assert (Path(state["private"]) / "cert-renew-operator-2026.confirmed").is_file()
     with pytest.raises(FileExistsError):
         op.renew_server_cert(state, "operator-2026", 365)
@@ -190,7 +191,7 @@ def test_expired_or_too_short_ca_refuses_before_intent_or_restart(op, renewal, m
     assert not any("restart" in c[1] for c in calls if c[0] == "command")
 
 
-@pytest.mark.parametrize("fail_step", [2, 3, 4])
+@pytest.mark.parametrize("fail_step", [2, 3, 4, 5])
 def test_partial_renewal_is_unknown_keeps_intent_and_blocks_replay(op, renewal, monkeypatch, fail_step):
     state, calls = renewal
     count = 0
@@ -231,3 +232,71 @@ def test_tls_job_propagates_a_failed_verifier_in_a_pipeline(op, monkeypatch):
     monkeypatch.setattr(op, "run", local_shell_only)
     with pytest.raises(RuntimeError, match="pipeline failed"):
         op.tls_job({"operator_image": "not-run"}, [], "false | true")
+
+
+def test_renewal_probes_never_mount_ca_private_key(op, renewal):
+    state, calls = renewal
+    op.renew_server_cert(state, "least-privilege", 365)
+    jobs = [c for c in calls if c[0] == "tls"]
+    assert jobs[0][1] == [(Path(state["private"]) / "ca/ca.crt", "/ca/ca.crt", False)]
+    for job in jobs:
+        if job[4].get("network", "none") != "none":
+            assert not any(source == Path(state["private"]) / "ca" for source, _, _ in job[1])
+    signing, = [job for job in jobs if "-CAkey" in job[2]]
+    assert signing[4].get("network", "none") == "none"
+
+
+def test_reserved_initial_refused_before_intent_or_dispatch(op, renewal):
+    state, calls = renewal
+    with pytest.raises(ValueError):
+        op.renew_server_cert(state, "initial", 365)
+    assert calls == []
+    assert not list(Path(state["private"]).glob("*.intent"))
+
+
+@pytest.mark.parametrize("seconds", [0, 4, 91])
+def test_readiness_deadline_invalid_before_dispatch(op, renewal, seconds):
+    state, calls = renewal
+    with pytest.raises(ValueError, match="deadline"):
+        op.renew_server_cert(state, "invalid-deadline", 365, seconds)
+    assert not calls
+    assert not list(Path(state["private"]).glob("*.intent"))
+
+
+def test_readiness_failure_never_restarts_twice_or_probes_leaf(op, renewal, monkeypatch):
+    state, calls = renewal
+    original = op.tls_job
+    def fail_ready(state, mounts, script, *args, **kwargs):
+        original(state, mounts, script, *args, **kwargs)
+        if "pg_isready" in script:
+            raise RuntimeError("readiness uncertain")
+    monkeypatch.setattr(op, "tls_job", fail_ready)
+    with pytest.raises(RuntimeError, match="readiness uncertain"):
+        op.renew_server_cert(state, "not-ready", 365)
+    assert len([c for c in calls if c[0] == "command" and "restart" in c[1]]) == 1
+    assert not any("s_client" in c[2] for c in calls if c[0] == "tls")
+    assert (Path(state["private"]) / "cert-renew-not-ready.intent").is_file()
+    assert not (Path(state["private"]) / "cert-renew-not-ready.confirmed").exists()
+
+
+@pytest.mark.parametrize("mode,expected,count", [("success", 0, 1), ("refused", 1, 6), ("hang", 124, 1)])
+def test_readiness_real_shell_bounded_observation_only(op, tmp_path, monkeypatch, mode, expected, count):
+    import os
+    import subprocess
+    fake = tmp_path / "pg_isready"
+    log = tmp_path / "observations"
+    fake.write_text('#!/bin/sh\necho probe >> "$PROBE_LOG"\n' +
+                    ('/bin/sleep 2\n' if mode == "hang" else '') +
+                    ('exit 0\n' if mode == "success" else 'exit 1\n'))
+    fake.chmod(0o700)
+    sleep = tmp_path / "sleep"
+    sleep.write_text('#!/bin/sh\nexit 0\n')
+    sleep.chmod(0o700)
+    def shell(state, mounts, script, *args, **kwargs):
+        assert not mounts and kwargs['network'] == 'owned_pg-net'
+        result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script, 'readiness', *map(str, args)],
+                                env={**os.environ, 'PATH': str(tmp_path)+':'+os.environ['PATH'], 'PROBE_LOG': str(log)}, timeout=3)
+        assert result.returncode == expected
+    monkeypatch.setattr(op, "tls_job", shell)
+    op.wait_postgres({'project': 'owned'}, 0.1 if mode == 'hang' else 1)
+    assert log.read_text().splitlines() == ['probe'] * count
