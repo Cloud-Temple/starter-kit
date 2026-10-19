@@ -1,7 +1,7 @@
 # === Framework MCP ===
 # Le SDK v2 sépare les types du SDK : garder les deux versions identiques.
-mcp[cli]==2.1.1
-mcp-types==2.1.1
+mcp[cli]==2.2.0
+mcp-types==2.2.0
 # Transport requis par le client Streamable HTTP du SDK MCP v2.
 httpx2==2.12.0
 uvicorn>=0.32.0
