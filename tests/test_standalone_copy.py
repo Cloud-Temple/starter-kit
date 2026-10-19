@@ -217,3 +217,17 @@ def test_renewal_failure_cli_never_prints_secret(op, monkeypatch, capsys):
     with pytest.raises(SystemExit):
         op.main()
     assert "do-not-expose" not in capsys.readouterr().err
+
+
+def test_tls_job_propagates_a_failed_verifier_in_a_pipeline(op, monkeypatch):
+    import subprocess
+    def local_shell_only(argv, **kwargs):
+        # Exercise the exact shell flags selected by the launcher, without Docker.
+        shell = argv[argv.index("-euc"):] if "-euc" in argv else argv[argv.index("-euo"):]
+        result = subprocess.run(["bash", *shell], capture_output=True, text=True, timeout=5)
+        if result.returncode:
+            raise RuntimeError("verification pipeline failed")
+        return result.stdout
+    monkeypatch.setattr(op, "run", local_shell_only)
+    with pytest.raises(RuntimeError, match="pipeline failed"):
+        op.tls_job({"operator_image": "not-run"}, [], "false | true")

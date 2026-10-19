@@ -33,7 +33,7 @@ def tls_job(state, mounts, script, *args, user=None, network="none", root=False)
             command += ["--cap-add", cap]
     for source, target, writable in mounts:
         command += ["--mount", f"type=bind,src={source},dst={target}" + ("" if writable else ",readonly")]
-    return run(command + ["--entrypoint", "bash", state["operator_image"], "-euc", script,
+    return run(command + ["--entrypoint", "bash", state["operator_image"], "-euo", "pipefail", "-c", script,
                           "tls-operation", *map(str, args)])
 
 
