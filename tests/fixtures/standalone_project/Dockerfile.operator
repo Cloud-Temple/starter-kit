@@ -1,0 +1,11 @@
+ARG TOOLS_LOCAL_IMAGE
+FROM ${TOOLS_LOCAL_IMAGE}
+USER root
+# Debian package availability must be established at build, never inferred from libpq.
+ARG PG_CLIENT_VERSION=17.11-0+deb13u1
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client-17=${PG_CLIENT_VERSION} \
+    && rm -rf /var/lib/apt/lists/* \
+    && pg_dump --version | grep -E ' 17\.11' \
+    && pg_restore --version | grep -E ' 17\.11'
+USER mcp

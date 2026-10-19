@@ -45,7 +45,10 @@ def test_waf_build_uses_reviewed_security_versions_and_non_root_runtime():
 def test_compose_images_do_not_use_floating_latest_tags():
     compose_files = list(BOILERPLATE.glob("docker-compose*.yml"))
 
-    assert len(compose_files) == 3
+    assert {p.name for p in compose_files} == {
+        "docker-compose.yml", "docker-compose.ci.yml", "docker-compose.vault-ci.yml",
+        "docker-compose.pg-client.yml", "docker-compose.pg-operator.yml", "docker-compose.postgres.yml",
+    }
 
     for compose_file in compose_files:
         content = compose_file.read_text(encoding="utf-8")

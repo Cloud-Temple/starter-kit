@@ -225,3 +225,10 @@ Ne jamais transmettre :
 - bootstrap key admin ;
 - contenu brut des secrets Vault ;
 - chemins internes sensibles non nécessaires.
+
+## Option PostgreSQL locale
+
+Le [parcours opérateur distribué](../boilerplate/ops/postgres/README.md) décrit
+la préparation TLS et les fragments Compose explicites, les fichiers RO, les
+droits et l'arrêt sans suppression du volume. Les procédures d'installation,
+readiness, sauvegarde et restauration appartiennent au produit dérivé.

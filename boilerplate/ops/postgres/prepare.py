@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""Explicit infrastructure operator. No application driver, schema or automatic replay.
+
+All Docker calls require an operator-authorized window. --help/validation is offline.
+State is written before dispatch, so interruption always preserves an uncertain phase.
+"""
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import stat
+import subprocess
+import sys
+
+PG_IMAGE = "postgres:17.11-trixie@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3"
+BASE_FILES = ("docker-compose.yml", "docker-compose.pg-client.yml",
+              "docker-compose.postgres.yml", "docker-compose.pg-operator.yml")
+
+
+def identifier(value):
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", value):
+        raise ValueError("Invalid SQL identifier")
+    return value
+
+
+def private_path(value, *, exists=True):
+    p = Path(value)
+    if not p.is_absolute() or p != p.resolve() or any(x.is_symlink() for x in (p, *p.parents)):
+        raise ValueError("Absolute path without symlink required")
+    if exists:
+        st = p.stat()
+        if not stat.S_ISDIR(st.st_mode) or st.st_mode & 0o077:
+            raise ValueError("Private directory (0700) required")
+    return p
+
+
+def run(argv, *, capture=False, env=None, timeout=120):
+    # Never print argv/env/output on failure: product tools can include secrets.
+    result = subprocess.run(argv, check=False, text=True, env=env, timeout=timeout,
+                            stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+    if result.returncode:
+        raise RuntimeError("Operator command failed; inspect privately, do not replay")
+    return result.stdout if capture else ""
+
+
+def write_private(p, content):
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(content)
+
+
+def save(state, phase):
+    # Append-only dispatch journal, not a claim that the operation committed.
+    write_private(Path(state["private"]) / (phase + ".intent"), "dispatch-intended\n")
+
+
+def inspect_image(image):
+    rows = json.loads(run(["docker", "image", "inspect", image], capture=True))
+    if len(rows) != 1 or not re.fullmatch(r"sha256:[0-9a-f]{64}", rows[0]["Id"]):
+        raise ValueError("One local ImageID required; no RepoDigest assumption")
+    return rows[0]["Id"]
+
+
+def measured_ids(image, account):
+    result = []
+    for flag in ("-u", "-g"):
+        value = run(["docker", "run", "--rm", "--network", "none", "--memory", "128m",
+                     "--cpus", "0.5", "--entrypoint", "id", image, flag, account], capture=True).strip()
+        if not value.isdecimal() or int(value) < 1:
+            raise ValueError("Non-root numeric identity required")
+        result.append(int(value))
+    return result
+
+
+def compose(state, *, extra=(), env=None):
+    args = ["docker", "compose", "--project-directory", state["root"], "-p", state["project"]]
+    for file in (*BASE_FILES, *extra):
+        args += ["-f", str(Path(state["root"]) / file)]
+    merged = dict(os.environ)
+    merged.update(state["env"])
+    merged.update(env or {})
+    return args, merged
+
+
+def operator(state, action, *, database=None, new_password=None):
+    # A job sees its provisioner connection plus at most one new role password.
+    conn = Path(state["private"]) / ("provision-db" if database else "provision")
+    if new_password:
+        # New directory per role invocation; never reuse a previous job's issuance file.
+        conn = Path(state["private"]) / ("issue-" + new_password)
+    env = {"PG_JOB_PRIVATE_DIR": str(conn), "PG_JOB_UID": str(state["operator_ids"][0]),
+           "PG_JOB_GID": str(state["operator_ids"][1])}
+    args, merged = compose(state, env=env)
+    return run(args + ["run", "--rm", "--no-deps", "pg-operator", *action],
+               env=merged, capture=True)
+
+
+def stage(state, directory, uid, gid):
+    # Explicit UID0 helper, only this newly created private directory RW.
+    run(["docker", "run", "--rm", "--network", "none", "--memory", "512m", "--cpus", "1",
+         "--user", "0:0", "--cap-drop", "ALL", "--cap-add", "CHOWN",
+         "--cap-add", "FOWNER", "--cap-add", "DAC_OVERRIDE",
+         "--mount", f"type=bind,src={directory},dst=/owned",
+         "--entrypoint", "bash", state["operator_image"], "-euc",
+         'chown -R "$1:$2" /owned; chmod 700 /owned; find /owned -type f -exec chmod 600 {} +',
+         "stage", str(uid), str(gid)])
+
+
+def connection(directory, ca, role, password, database, uid, gid, state, *, new_password=None):
+    directory.mkdir(mode=0o700)
+    write_private(directory / "ca.crt", ca)
+    write_private(directory / "pg_service.conf", "[operator]\n[tools-app]\n[tools-install]\n")
+    # Each name denotes exactly this job's role; cannot select a different identity.
+    section = (f"host=postgres\nport=5432\ndbname={database}\nuser={role}\n"
+               "sslmode=verify-full\nsslrootcert=/run/pg-client/ca.crt\n"
+               "passfile=/run/pg-client/pgpass\nconnect_timeout=3\n")
+    (directory / "pg_service.conf").write_text("".join(f"[{name}]\n{section}" for name in
+                                                       ("operator", "tools-app", "tools-install")))
+    write_private(directory / "pgpass", f"postgres:5432:{database}:{role}:{password}\n")
+    if new_password:
+        write_private(directory / "new-role.password", new_password)
+    stage(state, directory, uid, gid)
+
+
+def initialize(args):
+    root = Path.cwd().resolve()
+    for file in BASE_FILES:
+        if not (root / file).is_file():
+            raise ValueError("Run from an autonomous copied project")
+    p = private_path(args.private, exists=False)
+    if p.exists() or not p.parent.is_dir():
+        raise ValueError("New private destination with existing parent required")
+    if not re.fullmatch(r"starter48-[a-z0-9-]{1,40}-(src|restore)", args.project):
+        raise ValueError("Unique starter48-<run>-src|restore project required")
+    database = identifier(args.database)
+    roles = {k: identifier(v) for k, v in dict(owner=args.owner, app=args.app,
+             install=args.installer, backup=args.backup, restore=args.restore).items()}
+    if len(set(roles.values())) != 5 or "postgres" in roles.values():
+        raise ValueError("Distinct non-postgres roles required")
+    app_image = inspect_image(args.app_image)
+    job_image = inspect_image(args.job_image)
+    operator_image = inspect_image(args.operator_image)
+    pg_image = inspect_image(PG_IMAGE)
+    app_ids = measured_ids(app_image, "mcp")
+    job_ids = measured_ids(job_image, "mcp")
+    operator_ids = measured_ids(operator_image, "postgres")
+    pg_ids = measured_ids(pg_image, "postgres")
+    # All validation precedes creation. No existing path, volume or database is adopted.
+    p.mkdir(mode=0o700)
+    state = dict(root=str(root), private=str(p), project=args.project, database=database,
+                 roles=roles, app_image=app_image, job_image=job_image,
+                 operator_image=operator_image, app_ids=app_ids, job_ids=job_ids,
+                 operator_ids=operator_ids, pg_ids=pg_ids)
+    state["env"] = dict(PG_PRIVATE_DIR=str(p), PG_CLIENT_PRIVATE_DIR=str(p / "app"),
+                        PG_OPERATOR_IMAGE=operator_image, PG_DATABASE_NAME=database,
+                        PG_JOB_PRIVATE_DIR=str(p / "provision"),
+                        PG_JOB_UID=str(operator_ids[0]), PG_JOB_GID=str(operator_ids[1]),
+                        **{"PG_" + k.upper() + "_ROLE": v for k, v in roles.items()})
+    write_private(p / "state.json", json.dumps(state, indent=2))
+    save(state, "initialize")
+    ca_dir = p / "ca"
+    ca_dir.mkdir(mode=0o700)
+    run(["docker", "run", "--rm", "--network", "none", "--memory", "512m", "--cpus", "1",
+         "--user", f"{os.getuid()}:{os.getgid()}", "--mount", f"type=bind,src={ca_dir},dst=/pki",
+         "--entrypoint", "bash", operator_image, "-euc",
+         'umask 077; cd /pki; openssl req -x509 -newkey rsa:3072 -nodes -days 30 '
+         '-subj /CN=standalone-test-ca -keyout ca.key -out ca.crt; '
+         'openssl req -newkey rsa:3072 -nodes -subj /CN=postgres -keyout server.key -out server.csr; '
+         'printf "subjectAltName=DNS:postgres\\nextendedKeyUsage=serverAuth\\n" > extensions; '
+         'openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial '
+         '-days 7 -extfile extensions -out server.crt'])
+    ca = (ca_dir / "ca.crt").read_text()
+    server = p / "server"
+    server.mkdir(mode=0o700)
+    for name in ("ca.crt", "server.crt", "server.key"):
+        write_private(server / name, (ca_dir / name).read_text())
+    bootstrap = secrets.token_hex(32)
+    write_private(server / "bootstrap.password", bootstrap)
+    stage(state, server, *pg_ids)
+    connection(p / "provision", ca, "postgres", bootstrap, "postgres", *operator_ids, state)
+    connection(p / "provision-db", ca, "postgres", bootstrap, database, *operator_ids, state)
+    for name, role in roles.items():
+        if name == "owner":
+            continue
+        password = secrets.token_hex(32)
+        ids = app_ids if name == "app" else job_ids
+        connection(p / name, ca, role, password, database, *ids, state)
+        connection(p / ("issue-" + name), ca, "postgres", bootstrap, "postgres",
+                   *operator_ids, state, new_password=password)
+    archive = p / "archives"
+    archive.mkdir(mode=0o700)
+    stage(state, archive, *job_ids)
+    write_private(p / "initialize.confirmed", "files-prepared-not-product-installed\n")
+    print(json.dumps({"status": "files_prepared", "state": str(p / "state.json"),
+                      "next": "explicit PostgreSQL start, then provision once"}))
+
+
+def load(filename):
+    p = Path(filename)
+    private_path(str(p.parent))
+    if p.is_symlink() or p.stat().st_mode & 0o077:
+        raise ValueError("Private regular state file required")
+    state = json.loads(p.read_text())
+    if state["root"] != str(Path.cwd().resolve()):
+        raise ValueError("Wrong copied project")
+    return state
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="action", required=True)
+    init = sub.add_parser("init", help="prepare NEW files; does not start PostgreSQL")
+    for field in ("private", "project", "database", "owner", "app", "installer", "backup", "restore",
+                  "app-image", "operator-image", "job-image"):
+        init.add_argument("--" + field, required=True)
+    for action in ("start-postgres", "provision", "install-product", "identity", "stop"):
+        command = sub.add_parser(action)
+        command.add_argument("--state", required=True)
+    args = parser.parse_args()
+    try:
+        if args.action == "init":
+            initialize(args)
+            return
+        state = load(args.state)
+        if args.action == "start-postgres":
+            # New state only. Existing volume is never adopted by a second initialization.
+            save(state, "start-postgres")
+            compose_args, env = compose(state)
+            existing = run(compose_args + ["ps", "--all", "--quiet", "postgres"],
+                           env=env, capture=True).strip()
+            volumes = run(["docker", "volume", "ls", "--quiet", "--filter",
+                           "label=com.docker.compose.project=" + state["project"]], capture=True).strip()
+            if existing or volumes:
+                raise ValueError("Existing resources: inspect instead of initializing")
+            run(compose_args + ["up", "-d", "--no-deps", "postgres"], env=env)
+            print('{"status":"postgres_start_dispatched","product_installed":false}')
+        elif args.action == "identity":
+            print(operator(state, ["identity"]))
+        elif args.action == "stop":
+            compose_args, env = compose(state)
+            run(compose_args + ["stop", "--timeout", "15"], env=env)
+            print('{"status":"stopped","volumes":"preserved"}')
+        elif args.action == "provision":
+            save(state, "provision")
+            for role in ("app", "install", "backup", "restore"):
+                operator(state, ["role", state["roles"][role]], new_password=role)
+            operator(state, ["database"])
+            operator(state, ["controls"], database=True)
+            proof = json.loads(operator(state, ["identity"], database=True))
+            if proof.get("tls") is not True:
+                raise ValueError("TLS not established")
+            write_private(Path(state["private"]) / "identity.json", json.dumps(proof))
+            write_private(Path(state["private"]) / "provision.confirmed", "infrastructure-only\n")
+            print('{"status":"infrastructure_prepared","product_installed":false}')
+        elif args.action == "install-product":
+            hook = Path(state["root"]) / "ops/postgres/product-install.sh"
+            if not hook.is_file() or hook.is_symlink():
+                raise ValueError("Product hook required; example is inactive")
+            if not (Path(state["private"]) / "provision.confirmed").is_file():
+                raise ValueError("Infrastructure confirmation required")
+            save(state, "product-install")
+            # This hook is operator-owned executable code, reviewed with the product.
+            run(["bash", str(hook), str(Path(args.state).resolve())], timeout=600)
+            write_private(Path(state["private"]) / "product-install.confirmed", "hook-confirmed\n")
+            print('{"status":"product_hook_confirmed","public_qualification":false}')
+    except (ValueError, RuntimeError, OSError, subprocess.SubprocessError, KeyError, json.JSONDecodeError):
+        print('{"status":"incomplete_or_unknown","next":"inspect authorized target; no automatic replay"}', file=sys.stderr)
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

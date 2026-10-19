@@ -1,5 +1,10 @@
 # Concevoir les données d'un projet dérivé
 
+Le kit propose aussi un [parcours infrastructure PostgreSQL optionnel](../boilerplate/ops/postgres/README.md).
+Il transporte les fichiers client et prépare une instance locale neuve ; il
+n'implémente aucun des contrats métier décrits ici. L'auteur raccorde son
+installateur public et conserve ses fournisseurs de secrets.
+
 Ce guide aide à écrire le design des données avant de choisir l'implémentation.
 Il fournit des questions et des recommandations facultatives, sans imposer un
 backend ou un modèle métier. Chaque MCP consigne ses décisions dans son dépôt.

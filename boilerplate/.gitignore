@@ -4,6 +4,8 @@
 
 # --- Secrets & config locale (NE JAMAIS committer) ---
 .env
+.postgres-private/
+ops/postgres/product-install.sh
 .clinerules/
 
 # --- Python ---

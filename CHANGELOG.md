@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Option infrastructure PostgreSQL locale : fragments Compose explicites, TLS,
+  fichiers client RO, préparation opérateur de bases/rôles et hook produit inactif
+  par défaut. Aucun backend applicatif distribué. Recette de qualification FILES
+  publique distincte du gabarit ; qualification native à effectuer avant livraison.
+
 ## v2.0.8 — 2026-09-17 — The real-S3 layer that never ran
 
 ### Fixed

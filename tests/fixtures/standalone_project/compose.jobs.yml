@@ -1,0 +1,86 @@
+services:
+  waf:
+    image: ${TOOLS_WAF_IMAGE:?image built from the copied unchanged WAF Dockerfile}
+    mem_limit: 256m
+    cpus: 0.5
+  mcp-tools:
+    image: ${TOOLS_APP_IMAGE:?local verified ImageID}
+    expose: ["8050"]
+    environment:
+      FILES_METADATA_BACKEND: postgres
+      FILES_CREDENTIALS_MODE: direct
+      FILES_DURABILITY: local
+      FILES_PG_SERVICE: tools-app
+      FILES_PG_DATABASE: tools
+      FILES_PG_ROLE: tools_files_app
+      FILES_PG_OWNER: tools_files_owner
+      FILES_PG_SCHEMA: tools_files
+      FILES_PG_SYSTEM_IDENTIFIER: ${TOOLS_PG_SYSTEM_IDENTIFIER:?observed target identity}
+      FILES_PG_TIMELINE: ${TOOLS_PG_TIMELINE:?observed target timeline}
+      FILES_PG_CA_FILE: /run/pg-client/ca.crt
+      PGSERVICEFILE: /run/pg-client/pg_service.conf
+      PGPASSFILE: /run/pg-client/pgpass
+      FILES_S3_DATA_SIGNATURE: s3v4
+    env_file: ${TOOLS_S3_APP_ENV:?private scoped app S3 env file}
+    volumes:
+      - type: bind
+        source: ${TEST_S3_CA_FILE:?public test S3 CA}
+        target: /run/test-s3/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [mcp-net, pg-net, test-s3]
+    mem_limit: 1g
+    cpus: 1
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8050/ready', timeout=3)"]
+  tools-job:
+    profiles: [operator]
+    image: ${TOOLS_JOB_IMAGE:?job image based on the verified local app ImageID}
+    user: ${PG_JOB_UID:?measured job UID}:${PG_JOB_GID:?measured job GID}
+    entrypoint: [python, -m]
+    environment:
+      FILES_METADATA_BACKEND: postgres
+      FILES_CREDENTIALS_MODE: direct
+      FILES_DURABILITY: local
+      FILES_PG_SERVICE: operator
+      FILES_PG_DATABASE: tools
+      FILES_PG_ROLE: ${TOOLS_JOB_ROLE:?one SQL identity per job}
+      FILES_PG_OWNER: tools_files_owner
+      FILES_PG_SCHEMA: tools_files
+      FILES_PG_SYSTEM_IDENTIFIER: ${TOOLS_PG_SYSTEM_IDENTIFIER:?observed target identity}
+      FILES_PG_TIMELINE: ${TOOLS_PG_TIMELINE:?observed target timeline}
+      FILES_PG_CA_FILE: /run/pg-client/ca.crt
+      PGSERVICEFILE: /run/pg-client/pg_service.conf
+      PGPASSFILE: /run/pg-client/pgpass
+      FILES_S3_DATA_SIGNATURE: s3v4
+    env_file: ${TOOLS_S3_JOB_ENV:?private S3 identity scoped to this job}
+    volumes:
+      - type: bind
+        source: ${TEST_S3_CA_FILE:?public test S3 CA}
+        target: /run/test-s3/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PG_JOB_PRIVATE_DIR:?one SQL job directory}
+        target: /run/pg-client
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TOOLS_ARCHIVE_PARENT:?private parent owned by measured job UID}
+        target: /archives
+        read_only: ${TOOLS_ARCHIVE_READ_ONLY:-true}
+        bind:
+          create_host_path: false
+    networks: [pg-net, test-s3]
+    mem_limit: 512m
+    cpus: 1
+    restart: "no"
+networks:
+  # TEST WITNESS ONLY. The S3 operator creates this isolated scenario network once.
+  # No PostgreSQL service joins it. Source and restore share only this S3 route.
+  test-s3:
+    external: true
+    name: ${TEST_S3_NETWORK:?explicit network owned by this qualification scenario}
