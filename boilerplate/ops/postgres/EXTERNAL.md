@@ -16,6 +16,15 @@ Le fragment `docker-compose.postgres-host.yml` devient alors explicitement
 actif : **bind127.0.0.1 uniquement**, aucun port dans le parcours #48 normal.
 `start-postgres` ne lance ni MCP ni WAF ; installation via les mêmes jobs/hook.
 
+Ce mode exige Docker Engine **28.0 ou plus récent** pour la portée loopback
+(correction de l’accès possible depuis le même segment L2 sur les versions
+antérieures). Le bridge `pg-net` devient ordinaire : PostgreSQL et l’opérateur
+obtiennent aussi une sortie NAT ; TLS et les règles HBA restent obligatoires.
+Sans `--host-port`, `pg-net` reste internal et PostgreSQL ne publie aucun port.
+Le port WAF déjà présent dans la composition de base reste identique ; la seule
+publication ajoutée par cet opt-in est celle de PostgreSQL sur127.0.0.1.
+Choisir un **projet neuf** : ne pas basculer le réseau d’un projet déjà créé.
+
 ```sh
 # Depuis une copie neuve ; compléter les autres arguments init du README.
 python3 ops/postgres/prepare.py init --host-port 15432 \

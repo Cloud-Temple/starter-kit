@@ -562,6 +562,7 @@ def test_real_compose_config_keeps_operator_and_app_without_runtime(tmp_path, mo
     import subprocess
     if not shutil.which("docker"):
         pytest.skip("Docker Compose CLI is unavailable; no runtime fallback")
+    monkeypatch.delenv("COMPOSE_PROFILES", raising=False)
     external = load("external")
     copied = tmp_path / "standalone-copy"
     shutil.copytree(ROOT / "boilerplate", copied)
@@ -598,3 +599,50 @@ def test_real_compose_config_keeps_operator_and_app_without_runtime(tmp_path, mo
     assert "pg-external-operator" in rendered["services"]
     assert set(rendered["services"]["pg-external-operator"]["networks"]) == {"pg-external"}
     assert set(rendered["services"]["mon-mcp"]["networks"]) == {"mcp-net", "pg-external"}
+
+
+def test_real_local_host_and_default_compose_merge_ports_and_network(tmp_path, monkeypatch):
+    """Real Compose rendering: opt-in changes only PG publication/network scalar."""
+    import shutil
+    import subprocess
+    if not shutil.which("docker"):
+        pytest.skip("Docker Compose CLI is unavailable; no runtime fallback")
+    monkeypatch.delenv("COMPOSE_PROFILES", raising=False)
+    prepare = load("prepare")
+    copied = tmp_path / "copied"
+    shutil.copytree(ROOT / "boilerplate", copied)
+    (copied / ".env").write_text("")
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    env = dict(PG_PRIVATE_DIR=str(private), PG_CLIENT_PRIVATE_DIR=str(private),
+               PG_OPERATOR_IMAGE="sha256:" + "a" * 64, PG_JOB_PRIVATE_DIR=str(private),
+               PG_JOB_UID="1001", PG_JOB_GID="1001", PG_DATABASE_NAME="domain",
+               PG_OWNER_ROLE="domain_owner", PG_APP_ROLE="domain_app", PG_INSTALL_ROLE="domain_install",
+               PG_BACKUP_ROLE="domain_backup", PG_RESTORE_ROLE="domain_restore", WAF_PORT="18082")
+    rendered = {}
+    for host in (False, True):
+        state = dict(root=str(copied), project="starter49-render-src", env=dict(env))
+        if host:
+            state.update(host_port=19432)
+            state["env"]["PG_HOST_PORT"] = "19432"
+        argv, configured = prepare.compose(state)
+        expected_files = 5 if host else 4
+        assert argv.count("-f") == expected_files
+        command = argv + ["--profile", "operator", "config", "--format", "json"]
+        result = subprocess.run(command, env=configured, capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, "Compose config refused; no runtime effect attempted"
+        rendered[host] = json.loads(result.stdout)
+    default, host = rendered[False], rendered[True]
+    assert default["networks"]["pg-net"]["internal"] is True
+    assert not host["networks"]["pg-net"].get("internal")
+    assert not default["services"]["postgres"].get("ports")
+    assert set(default["services"]) == set(host["services"])
+    for name in host["services"]:
+        if name != "postgres":
+            # The inherited WAF port is preserved, never erased to force this oracle.
+            assert host["services"][name].get("ports") == default["services"][name].get("ports")
+    ports = host["services"]["postgres"]["ports"]
+    assert len(ports) == 1
+    assert ports[0]["host_ip"] == "127.0.0.1" and str(ports[0]["published"]) == "19432"
+    assert ports[0]["target"] == 5432 and ports[0]["protocol"] == "tcp"
+    assert host["services"]["waf"]["ports"] == default["services"]["waf"]["ports"]
