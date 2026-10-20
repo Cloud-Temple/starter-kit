@@ -33,9 +33,13 @@ async def run(args):
         exclusive(intent, payload)
         result = await client.call_tool("files", dict(operation="write", **payload))
         if args.phase == "refuse-write":
-            if result.get("status") != "error" or result.get("remote_result") == "confirmed":
-                raise RuntimeError("Write unexpectedly accepted")
-            print('{"status":"public_write_refused","absence_not_yet_proven":true}')
+            # Public Tools: wrapper error, or catalog uncertainty (not an absence).
+            if not isinstance(result, dict) or (
+                result.get("status"), result.get("remote_result"), result.get("effect_state")
+            ) not in (("error", None, None), ("incomplete", "uncertain", None),
+                      ("incomplete", "uncertain", "unobserved")):
+                raise RuntimeError("Write outcome not recognized as non-confirmed")
+            print('{"status":"public_write_not_confirmed","absence_not_yet_proven":true}')
             return
         if result.get("status") != "ok" or result.get("remote_result") != "confirmed":
             raise RuntimeError("Write not confirmed; preserve intent, never rerun seed")

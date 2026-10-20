@@ -17,6 +17,8 @@ pytestmark = [pytest.mark.e2e, pytest.mark.skipif(os.environ.get("RUN_STANDALONE
                                                reason="standalone infrastructure window not enabled")]
 
 
+# Five app recreations include graceful shutdowns; the inherited 60s is too short.
+@pytest.mark.timeout(300)
 def test_public_copy_write_restart_refusals_and_preserved_volume():
     root = Path(os.environ["STANDALONE_48_COPY"]).resolve()
     state_file = Path(os.environ["STANDALONE_48_STATE"]).resolve()
