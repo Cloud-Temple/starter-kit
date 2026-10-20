@@ -119,7 +119,7 @@ def initialize(args):
                 service["operator"]["dbname"] = db
                 import io
                 output = io.StringIO()
-                service.write(output)
+                service.write(output, space_around_delimiters=False)
                 content = output.getvalue()
             prepare.write_private(directory / filename, content)
         prepare.stage(state, directory, *state["operator_ids"])

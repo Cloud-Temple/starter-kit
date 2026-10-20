@@ -646,3 +646,37 @@ def test_real_local_host_and_default_compose_merge_ports_and_network(tmp_path, m
     assert ports[0]["host_ip"] == "127.0.0.1" and str(ports[0]["published"]) == "19432"
     assert ports[0]["target"] == 5432 and ports[0]["protocol"] == "tcp"
     assert host["services"]["waf"]["ports"] == default["services"]["waf"]["ports"]
+
+
+def test_generated_external_services_preserve_libpq_grammar_and_fields(tmp_path, monkeypatch):
+    import configparser
+    test_external_files_are_new_scoped_profiles_not_a_server_or_ca(tmp_path, monkeypatch)
+    original = (tmp_path / "authorized-provisioner/pg_service.conf").read_text()
+    provision = (tmp_path / "new-private/provision/pg_service.conf").read_text()
+    database = (tmp_path / "new-private/provision-db/pg_service.conf").read_text()
+    assert provision.strip() == original.strip()
+    assert all(" =" not in line and "= " not in line for line in database.splitlines())
+    expected = configparser.ConfigParser(interpolation=None)
+    actual = configparser.ConfigParser(interpolation=None)
+    expected.read_string(original)
+    actual.read_string(database)
+    assert actual.sections() == expected.sections() == ["operator"]
+    fields = dict(expected["operator"])
+    fields["dbname"] = "domain"
+    assert dict(actual["operator"]) == fields
+    assert "fixture:5432:*:postgres:authorized-private-password" in (tmp_path / "new-private/provision-db/pgpass").read_text()
+
+
+def test_generated_external_provision_db_parses_real_libpq_without_network(tmp_path, monkeypatch):
+    psycopg = pytest.importorskip("psycopg", reason="Optional local libpq parser qualification")
+    test_external_files_are_new_scoped_profiles_not_a_server_or_ca(tmp_path, monkeypatch)
+    for key in list(os.environ):
+        if key.startswith("PG"):
+            monkeypatch.delenv(key)
+    monkeypatch.setenv("PGSERVICEFILE", str(tmp_path / "new-private/provision-db/pg_service.conf"))
+    # hostaddr requires numeric input (AI_NUMERICHOST): fail before DNS/TCP/auth.
+    with pytest.raises(psycopg.OperationalError) as failure:
+        psycopg.connect(service="operator", hostaddr="not-a-numeric-address", connect_timeout=1)
+    text = str(failure.value)
+    assert "syntax error in service file" not in text
+    assert "could not parse network address" in text
