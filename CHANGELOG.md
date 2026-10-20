@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Raccord standalone Python et PostgreSQL externe opt-in : port PG hôte limité
+  à loopback, profils hôte/conteneur distincts, bridge externe pour app et jobs,
+  préparation du seul domaine et préconditions HBA fermées sans modifier une
+  base voisine. Même produit/API/provider ; qualification native #49 distincte
+  encore requise, aucun transfert de données implicite.
+
 - TLS du parcours PostgreSQL persistant : durées CA/serveur configurables et
   renouvellement serveur explicite sous la même CA, générations préservées et
   redémarrage limité à PostgreSQL. La rotation CA reste une procédure distincte.

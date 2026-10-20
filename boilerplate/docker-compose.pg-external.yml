@@ -1,0 +1,44 @@
+# Base + this file ONLY: no local postgres service or internal pg-net.
+# Rename mon-mcp along with the base service when deriving the project.
+services:
+  mon-mcp:
+    image: ${PG_APP_IMAGE:?verified unchanged application ImageID}
+    volumes:
+      - type: bind
+        source: ${PG_CLIENT_PRIVATE_DIR:?private app connection}
+        target: /run/pg-client
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [pg-external]
+  pg-external-operator:
+    profiles: [operator]
+    image: ${PG_OPERATOR_IMAGE:?pinned operator image}
+    entrypoint: [bash, /ops/operator.sh]
+    user: ${PG_JOB_UID:?measured UID}:${PG_JOB_GID:?measured GID}
+    environment:
+      PGSERVICEFILE: /run/pg-client/pg_service.conf
+      PGPASSFILE: /run/pg-client/pgpass
+      PGSERVICE: operator
+      PGDATABASE_NAME: ${PG_DATABASE_NAME:?domain}
+      PG_OWNER_ROLE: ${PG_OWNER_ROLE:?owner}
+      PG_APP_ROLE: ${PG_APP_ROLE:?app}
+      PG_INSTALL_ROLE: ${PG_INSTALL_ROLE:?install}
+      PG_BACKUP_ROLE: ${PG_BACKUP_ROLE:?backup}
+      PG_RESTORE_ROLE: ${PG_RESTORE_ROLE:?restore}
+    volumes:
+      - ./ops/postgres:/ops:ro
+      - type: bind
+        source: ${PG_JOB_PRIVATE_DIR:?one role per job}
+        target: /run/pg-client
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [pg-external]
+    mem_limit: 512m
+    cpus: 1
+    restart: "no"
+networks:
+  pg-external:
+    external: true
+    name: ${PG_EXTERNAL_NETWORK:?ordinary bridge owned by this case}

@@ -9,8 +9,8 @@ procédures publiques du produit avant de qualifier une opération métier.
 Le mode standalone ne change que l'emplacement de PostgreSQL : mêmes sources,
 image applicative, schéma, API, droits et fournisseurs de secrets. Le Compose de
 base ne lance pas PostgreSQL. Aucun override n'est autochargé. Le lancement
-Python, le PG accessible depuis l'hôte et l'externe partagé seront qualifiés
-séparément (#49), après livraison du local (#48). Changer de cible ne transfère
+Python, le PG accessible depuis l'hôte et l'externe partagé sont décrits dans
+[EXTERNAL.md](EXTERNAL.md) et restent à qualifier séparément (#49), après livraison du local (#48). Changer de cible ne transfère
 pas les données.
 
 ## Préconditions

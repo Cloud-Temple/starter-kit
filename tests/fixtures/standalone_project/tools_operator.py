@@ -36,16 +36,17 @@ def sql_product(state, filename=None, text=None):
     args, env = prepare.compose(state, env=dict(
         PG_JOB_PRIVATE_DIR=str(Path(state["private"]) / "provision-db"),
         PG_JOB_UID=str(state["operator_ids"][0]), PG_JOB_GID=str(state["operator_ids"][1])))
+    service = "pg-external-operator" if state.get("mode") == "external" else "pg-operator"
     if filename:
         source = Path(filename).resolve()
         args += ["run", "--rm", "--no-deps", "--volume", f"{source}:/product.sql:ro",
-                 "--entrypoint", "psql", "pg-operator", "--no-psqlrc", "--set=ON_ERROR_STOP=1",
+                 "--entrypoint", "psql", service, "--no-psqlrc", "--set=ON_ERROR_STOP=1",
                  "--quiet", "--file", "/product.sql"]
         prepare.run(args, env=env)
     else:
         # Fixed witness grants only, not a generic SQL service.
         import subprocess
-        args += ["run", "--rm", "--no-deps", "--entrypoint", "psql", "pg-operator",
+        args += ["run", "--rm", "--no-deps", "--entrypoint", "psql", service,
                  "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--quiet"]
         result = subprocess.run(args, env=env, input=text, text=True, timeout=120,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -56,7 +57,8 @@ def sql_product(state, filename=None, text=None):
 def job(state, phase, arguments):
     env = product_env(state, phase)
     env["TOOLS_ARCHIVE_READ_ONLY"] = "false" if phase == "backup" else "true"
-    args, merged = prepare.compose(state, extra=("compose.jobs.yml",), env=env)
+    extra = "compose.external-jobs.yml" if state.get("mode") == "external" else "compose.jobs.yml"
+    args, merged = prepare.compose(state, extra=(extra,), env=env)
     result = prepare.run(args + ["run", "--rm", "--no-deps", "tools-job", *arguments],
                          env=merged, capture=True, timeout=180)
     payload = json.loads(result)
@@ -99,11 +101,13 @@ def main():
         prepare.operator(state, ["retire-" + args.phase], database=True)
     else:
         env = product_env(state, "install")
-        arguments, merged = prepare.compose(state, extra=("compose.jobs.yml",), env=env)
+        extra = "compose.external-jobs.yml" if state.get("mode") == "external" else "compose.jobs.yml"
+        arguments, merged = prepare.compose(state, extra=(extra,), env=env)
         if args.phase == "start":
             prepare.run(arguments + ["up", "-d", "--no-build", "--no-deps", "mcp-tools", "waf"], env=merged)
         else:
-            prepare.run(arguments + ["start", "postgres", "mcp-tools", "waf"], env=merged)
+            services = ["mcp-tools", "waf"] if state.get("mode") == "external" else ["postgres", "mcp-tools", "waf"]
+            prepare.run(arguments + ["start", *services], env=merged)
     print(json.dumps({"status": "operator_phase_confirmed", "phase": args.phase,
                       "public_qualification": False}))
 
