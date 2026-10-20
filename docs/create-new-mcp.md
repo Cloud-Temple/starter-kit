@@ -73,11 +73,17 @@ src/mon_service/
 scripts/mcp_cli.py
 Dockerfile
 docker-compose.yml
+docker-compose.pg-client.yml  # renommer aussi la clé de service mon-mcp
 .env.example
 README.md
 ```
 
 Après renommage, vérifier :
+
+Avec l'option PostgreSQL, renommer **la même clé de service** dans la base et
+`docker-compose.pg-client.yml`. Sinon Compose créerait un service orphelin.
+Le [parcours copiable PostgreSQL](../boilerplate/ops/postgres/README.md) prépare
+uniquement l'infrastructure ; les procédures et le backend restent au produit.
 
 ```bash
 python -m <python_package>

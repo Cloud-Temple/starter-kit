@@ -1,6 +1,12 @@
 # Design des données — à compléter par le projet dérivé
 
 Statut : canevas, aucune décision produit ni capacité de stockage activée.
+
+Si PostgreSQL est retenu, documenter le raccord au [parcours opérateur copié](../ops/postgres/README.md),
+le hook d'installation du produit, les identités de chaque job, les fichiers du
+montage RO `/run/pg-client` et la preuve publique après restart. Aucun DDL produit
+ne s'exécute au démarrage de l'application. Le squelette sans backend ne constitue
+pas un témoin d'écriture SQL.
 Le propriétaire du MCP remplace les questions ci-dessous par ses choix, leurs
 raisons et leurs preuves. Les sections non applicables peuvent être marquées
 comme telles avec justification. Aucun backend ou schéma métier n'est imposé.

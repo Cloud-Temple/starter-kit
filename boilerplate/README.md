@@ -33,6 +33,11 @@ open http://localhost:8082/admin
 
 ### 3. CLI
 
+Option PostgreSQL : le [parcours opérateur](ops/postgres/README.md) ajoute une
+instance locale TLS avec volume persistant par des fragments explicites.
+Il ne transforme pas ce squelette en application SQL. Le projet dérivé fournit
+son installateur et ses contrats publics ; le montage client fait partie de la copie.
+
 ```bash
 pip install --require-hashes -r requirements.lock
 

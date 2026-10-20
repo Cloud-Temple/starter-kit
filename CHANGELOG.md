@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- TLS du parcours PostgreSQL persistant : durées CA/serveur configurables et
+  renouvellement serveur explicite sous la même CA, générations préservées et
+  redémarrage limité à PostgreSQL. La rotation CA reste une procédure distincte.
+
+- Option infrastructure PostgreSQL locale : fragments Compose explicites, TLS,
+  fichiers client RO, préparation opérateur de bases/rôles et hook produit inactif
+  par défaut. Aucun backend applicatif distribué. Recette de qualification FILES
+  publique distincte du gabarit ; qualification native à effectuer avant livraison.
+
 - SDK serveur MCP et types alignés sur 2.2.0 pour corriger CVE-2026-59951,
   lock hashé ciblé et limites du gestionnaire stateful vérifiées sur l'app
   réelle. Le client de compatibilité 1.28.1 reste isolé et inchangé. Les limites

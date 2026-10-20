@@ -1,0 +1,28 @@
+services:
+  pg-operator:
+    profiles: [operator]
+    image: ${PG_OPERATOR_IMAGE:?build the pinned infrastructure image first}
+    entrypoint: [bash, /ops/operator.sh]
+    user: ${PG_JOB_UID:?measured job UID}:${PG_JOB_GID:?measured job GID}
+    environment:
+      PGSERVICEFILE: /run/pg-client/pg_service.conf
+      PGPASSFILE: /run/pg-client/pgpass
+      PGSERVICE: operator
+      PGDATABASE_NAME: ${PG_DATABASE_NAME:?domain database}
+      PG_OWNER_ROLE: ${PG_OWNER_ROLE:?NOLOGIN owner}
+      PG_APP_ROLE: ${PG_APP_ROLE:?runtime role}
+      PG_INSTALL_ROLE: ${PG_INSTALL_ROLE:?temporary installer}
+      PG_BACKUP_ROLE: ${PG_BACKUP_ROLE:?backup identity}
+      PG_RESTORE_ROLE: ${PG_RESTORE_ROLE:?restore identity}
+    volumes:
+      - ./ops/postgres:/ops:ro
+      - type: bind
+        source: ${PG_JOB_PRIVATE_DIR:?one identity per job}
+        target: /run/pg-client
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [pg-net]
+    mem_limit: 512m
+    cpus: 1
+    restart: "no"

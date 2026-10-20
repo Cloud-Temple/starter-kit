@@ -1,0 +1,15 @@
+# Explicit opt-in. Rename mon-mcp here when renaming the base service.
+services:
+  mon-mcp:
+    volumes:
+      - type: bind
+        source: ${PG_CLIENT_PRIVATE_DIR:?run ops/postgres/prepare.py first}
+        target: /run/pg-client
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - pg-net
+networks:
+  pg-net:
+    internal: true

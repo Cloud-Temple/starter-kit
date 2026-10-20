@@ -1,0 +1,25 @@
+# Base + pg-client + this file, in that order. No PostgreSQL host port.
+services:
+  postgres:
+    image: postgres:17.11-trixie@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/pg-server/bootstrap.password
+      POSTGRES_INITDB_ARGS: --auth-local=scram-sha-256 --auth-host=scram-sha-256
+    command: [postgres, -c, config_file=/etc/postgresql/standalone.conf]
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - type: bind
+        source: ${PG_PRIVATE_DIR:?private installation directory}/server
+        target: /run/pg-server
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./ops/postgres/postgresql.conf:/etc/postgresql/standalone.conf:ro
+      - ./ops/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    networks: [pg-net]
+    mem_limit: 512m
+    cpus: 1
+    restart: "no"
+    stop_grace_period: 15s
+volumes:
+  pg-data: {}
