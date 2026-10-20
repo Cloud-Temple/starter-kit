@@ -48,6 +48,7 @@ def test_compose_images_do_not_use_floating_latest_tags():
     assert {p.name for p in compose_files} == {
         "docker-compose.yml", "docker-compose.ci.yml", "docker-compose.vault-ci.yml",
         "docker-compose.pg-client.yml", "docker-compose.pg-operator.yml", "docker-compose.postgres.yml",
+        "docker-compose.postgres-host.yml", "docker-compose.pg-external.yml",
     }
 
     for compose_file in compose_files:
