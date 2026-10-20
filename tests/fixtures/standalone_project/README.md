@@ -6,8 +6,8 @@ Elle doit être relue avant toute fenêtre Docker. Pas de scénario #49 ici.
 
 ## Provenance et construction manuelle
 
-Tools public SHA `8674c204ea7020321bc94682265305380c4367aa`, archive attendue
-SHA256 `48b4061cbcea7525d837a7d1ddd2047fda1c085e125c5374ac73bc841bd6ef8e`.
+Tools public SHA `6083e6b8c4a54a649583047a009eedc95238b373`, archive attendue
+SHA256 `73b1d329ec90c17cd5de58bb06f37dba6a253369c72695bcae5819871422e056`.
 `acquire.py` télécharge au SHA, contrôle avant extraction les chemins/types/
 tailles, refuse symlinks et hash divergent. Aucun fallback main, vendoring,
 contenu exécuté lors de l'acquisition ou résolution implicite des dépendances.

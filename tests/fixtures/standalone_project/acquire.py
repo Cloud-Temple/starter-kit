@@ -7,8 +7,8 @@ from pathlib import Path, PurePosixPath
 import tarfile
 import urllib.request
 
-SHA = "8674c204ea7020321bc94682265305380c4367aa"
-ARCHIVE_SHA256 = "48b4061cbcea7525d837a7d1ddd2047fda1c085e125c5374ac73bc841bd6ef8e"
+SHA = "6083e6b8c4a54a649583047a009eedc95238b373"
+ARCHIVE_SHA256 = "73b1d329ec90c17cd5de58bb06f37dba6a253369c72695bcae5819871422e056"
 URL = "https://api.github.com/repos/Cloud-Temple/mcp-tools/tarball/" + SHA
 MAX_ARCHIVE = 32 * 1024 * 1024
 MAX_EXTRACTED = 128 * 1024 * 1024
