@@ -203,3 +203,14 @@ lecture complète du voisin sous sa propre identité avant préparation, après
 préparation et en dernier, et teste fautes/refus/restart depuis Python local et
 externe. Les cas restent dans les tests standalone existants ; une simulation
 de ces raccords ne prouve ni un run natif, ni HA/PITR, ni ACCESS/Vault-first.
+
+### Limites de raccord à observer à la qualification
+
+`app-probe-job` conserve une copie privée du credential app sous l'UID du job
+jusqu'au nettoyage opérateur du domaine ; ne pas la traiter comme un nouveau
+scope ni la monter ailleurs. La même révocation app ferme les deux transports.
+Le copieur du témoin requiert PyYAML aussi sur le chemin #48 ; `fault.py` utilise
+`sed` avec le hostname échappé, dont le cas avec tiret reste à observer nativement.
+La sonde exige la fermeture TLS après l'ErrorResponse : un serveur ne donnant pas
+une fermeture TLS propre reste non confirmé, jamais un succès déduit d'un EOF
+anormal. Ces limites ne changent ni les droits ni les oracles du produit.

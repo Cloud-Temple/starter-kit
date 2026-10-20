@@ -534,3 +534,67 @@ def test_hba_future_database_probe_cannot_collide_with_requested_domain():
                                 address=address, netmask=address, auth_method=method))
     with pytest.raises(ValueError, match="non-domain"):
         load("hba").validate(data, "starter49_unrelated", ROLES, "neighbor")
+
+
+def test_config_argv_activates_operator_profile(monkeypatch):
+    external = load("external")
+    calls = []
+    config = dict(services={"mon-mcp": {"networks": {"pg-external": {}}},
+                           "pg-external-operator": {"networks": {"pg-external": {}}}},
+                  networks={"pg-external": {"external": True, "name": "case-net"}})
+    def command(argv, **kwargs):
+        calls.append(argv)
+        if "inspect" in argv:
+            return json.dumps([dict(Driver="bridge", Internal=False)])
+        rendered = copy.deepcopy(config)
+        if "--profile" not in argv or argv[argv.index("--profile") + 1] != "operator":
+            del rendered["services"]["pg-external-operator"]
+        return json.dumps(rendered)
+    monkeypatch.setattr(external.prepare, "run", command)
+    external.validate_network(dict(root="/copy", project="p", env={}, mode="external", target={"network": "case-net"}))
+    config_argv = calls[-1]
+    assert config_argv[-5:] == ["--profile", "operator", "config", "--format", "json"]
+
+
+def test_real_compose_config_keeps_operator_and_app_without_runtime(tmp_path, monkeypatch):
+    """Actual local Compose YAML rendering only; no daemon/network/container calls."""
+    import shutil
+    import subprocess
+    if not shutil.which("docker"):
+        pytest.skip("Docker Compose CLI is unavailable; no runtime fallback")
+    external = load("external")
+    copied = tmp_path / "standalone-copy"
+    shutil.copytree(ROOT / "boilerplate", copied)
+    (copied / ".env").write_text("")
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    env = dict(PG_APP_IMAGE="sha256:" + "a" * 64, PG_OPERATOR_IMAGE="sha256:" + "b" * 64,
+               PG_CLIENT_PRIVATE_DIR=str(private), PG_JOB_PRIVATE_DIR=str(private),
+               PG_JOB_UID="1001", PG_JOB_GID="1001", PG_DATABASE_NAME="domain",
+               PG_OWNER_ROLE="domain_owner", PG_APP_ROLE="domain_app", PG_INSTALL_ROLE="domain_install",
+               PG_BACKUP_ROLE="domain_backup", PG_RESTORE_ROLE="domain_restore", PG_EXTERNAL_NETWORK="config-only-case")
+    actual = []
+    def command(argv, **kwargs):
+        if "inspect" in argv:
+            # Network existence/ownership is not claimed by this local rendering test.
+            return json.dumps([dict(Driver="bridge", Internal=False)])
+        assert "config" in argv and argv[-2:] == ["--format", "json"]
+        result = subprocess.run(argv, env=kwargs["env"], capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, "Compose config failed; no runtime operation was attempted"
+        actual.append((argv, json.loads(result.stdout)))
+        return result.stdout
+    monkeypatch.setattr(external.prepare, "run", command)
+    state = dict(root=str(copied), project="starter49-config-src", env=env, mode="external",
+                 target={"network": "config-only-case"}, app_image=env["PG_APP_IMAGE"], operator_image=env["PG_OPERATOR_IMAGE"])
+    try:
+        external.validate_network(state)
+    finally:
+        # Optional private test evidence. Rendered data contains synthetic paths/images only.
+        evidence = os.environ.get("STARTER49_CONFIG_EVIDENCE")
+        if evidence:
+            with Path(evidence).open("x") as stream:
+                json.dump([{"argv": argv, "composition": value} for argv, value in actual], stream, indent=2)
+    _, rendered = actual[0]
+    assert "pg-external-operator" in rendered["services"]
+    assert set(rendered["services"]["pg-external-operator"]["networks"]) == {"pg-external"}
+    assert set(rendered["services"]["mon-mcp"]["networks"]) == {"mcp-net", "pg-external"}

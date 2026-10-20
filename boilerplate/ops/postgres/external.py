@@ -57,7 +57,7 @@ def validate_network(state):
     if len(rows) != 1 or rows[0]["Driver"] != "bridge" or rows[0]["Internal"] is not False:
         raise ValueError("External jobs/app require an ordinary dedicated bridge")
     args, env = prepare.compose(state)
-    effective = json.loads(prepare.run(args + ["config", "--format", "json"], env=env, capture=True))
+    effective = json.loads(prepare.run(args + ["--profile", "operator", "config", "--format", "json"], env=env, capture=True))
     services = effective["services"]
     operator = services["pg-external-operator"]
     app = services[state.get("app_service", "mon-mcp")]
