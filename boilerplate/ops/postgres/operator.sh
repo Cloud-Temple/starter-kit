@@ -8,6 +8,19 @@ for name in PGDATABASE_NAME PG_OWNER_ROLE PG_APP_ROLE PG_INSTALL_ROLE PG_BACKUP_
   [[ ${!name} =~ ^[a-z][a-z0-9_]{0,62}$ ]] || exit 2
 done
 case "$action" in
+  external-preflight)
+    "${psql_cmd[@]}" --tuples-only --no-align <<'SQL'
+SELECT json_build_object(
+ 'server_version_num',current_setting('server_version_num')::int,
+ 'roles',(SELECT coalesce(json_agg(rolname),'[]') FROM pg_roles),
+ 'databases',(SELECT coalesce(json_agg(datname),'[]') FROM pg_database),
+ 'hba',(SELECT coalesce(json_agg(row_to_json(h) ORDER BY rule_number),'[]') FROM pg_hba_file_rules h),
+ 'hba_file',current_setting('hba_file'),
+ 'hba_text',pg_read_file(current_setting('hba_file')),
+ 'superuser',(SELECT rolsuper FROM pg_roles WHERE rolname=current_user),
+ 'acl',(SELECT coalesce(json_agg(json_build_object('database',d.datname,'grantee',a.grantee,'privilege',a.privilege_type)),'[]') FROM pg_database d CROSS JOIN LATERAL aclexplode(coalesce(d.datacl,acldefault('d',d.datdba))) a));
+SQL
+    ;;
   identity)
     "${psql_cmd[@]}" --tuples-only --no-align <<'SQL'
 SELECT json_build_object('system_identifier',system_identifier::text,'timeline',(SELECT timeline_id FROM pg_control_checkpoint()),'tls',(SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid())) FROM pg_control_system();
@@ -35,6 +48,26 @@ REVOKE ALL ON DATABASE :"db" FROM PUBLIC;
 GRANT CONNECT ON DATABASE :"db" TO :"app", :"installer", :"backup", :"restore";
 GRANT :"owner" TO :"installer" WITH INHERIT FALSE, SET TRUE;
 GRANT :"owner" TO :"restore" WITH INHERIT FALSE, SET TRUE;
+SQL
+    ;;
+  database-external)
+    # This branch never revokes or alters a system/neighbor database.
+    "${psql_cmd[@]}" -v db="$PGDATABASE_NAME" -v owner="$PG_OWNER_ROLE" -v app="$PG_APP_ROLE" -v installer="$PG_INSTALL_ROLE" -v backup="$PG_BACKUP_ROLE" -v restore="$PG_RESTORE_ROLE" <<'SQL'
+CREATE ROLE :"owner" NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE DATABASE :"db" OWNER :"owner";
+REVOKE ALL ON DATABASE :"db" FROM PUBLIC;
+GRANT CONNECT ON DATABASE :"db" TO :"app", :"installer", :"backup", :"restore";
+GRANT :"owner" TO :"installer" WITH INHERIT FALSE, SET TRUE;
+GRANT :"owner" TO :"restore" WITH INHERIT FALSE, SET TRUE;
+SQL
+    ;;
+  external-retire-all)
+    "${psql_cmd[@]}" -v app="$PG_APP_ROLE" -v installer="$PG_INSTALL_ROLE" -v backup="$PG_BACKUP_ROLE" -v restore="$PG_RESTORE_ROLE" <<'SQL'
+ALTER ROLE :"app" NOLOGIN;
+ALTER ROLE :"installer" NOLOGIN;
+ALTER ROLE :"backup" NOLOGIN;
+ALTER ROLE :"restore" NOLOGIN;
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename IN (:'app',:'installer',:'backup',:'restore') AND pid<>pg_backend_pid();
 SQL
     ;;
   controls)

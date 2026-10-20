@@ -2,7 +2,12 @@
 
 Cette recette est de l'outillage de test, jamais un backend distribué ni une
 correction Tools. **Aucun résultat natif n'est acquis par sa présence.**
-Elle doit être relue avant toute fenêtre Docker. Pas de scénario #49 ici.
+Elle doit être relue avant toute fenêtre Docker. Le même témoin public est
+réutilisé par #49 avec `compose.external-jobs.yml`, généré lors de la copie :
+aucun postgres local ni pg-net ajouté par ce fragment, mêmes jobs/public Tools,
+app et jobs joints au bridge externe dédié ainsi qu'au seul réseau S3 du cas.
+Utiliser `external.py init --app-service mcp-tools` et la procédure distribuée
+`ops/postgres/EXTERNAL.md` ; aucune qualification #49 n'est déduite de #48.
 
 ## Provenance et construction manuelle
 

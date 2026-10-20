@@ -168,7 +168,15 @@ def measured_ids(image, account):
 
 def compose(state, *, extra=(), env=None):
     args = ["docker", "compose", "--project-directory", state["root"], "-p", state["project"]]
-    for file in (*BASE_FILES, *extra):
+    files = (("docker-compose.yml", "docker-compose.pg-external.yml")
+             if state.get("mode") == "external" else BASE_FILES)
+    if state.get("host_port") is not None:
+        if (state.get("mode") == "external" or type(state["host_port"]) is not int
+                or not 1024 <= state["host_port"] <= 65535
+                or state["env"].get("PG_HOST_PORT") != str(state["host_port"])):
+            raise ValueError("Invalid local loopback port state")
+        files += ("docker-compose.postgres-host.yml",)
+    for file in (*files, *extra):
         args += ["-f", str(Path(state["root"]) / file)]
     merged = dict(os.environ)
     merged.update(state["env"])
@@ -185,7 +193,8 @@ def operator(state, action, *, database=None, new_password=None):
     env = {"PG_JOB_PRIVATE_DIR": str(conn), "PG_JOB_UID": str(state["operator_ids"][0]),
            "PG_JOB_GID": str(state["operator_ids"][1])}
     args, merged = compose(state, env=env)
-    return run(args + ["run", "--rm", "--no-deps", "pg-operator", *action],
+    service = "pg-external-operator" if state.get("mode") == "external" else "pg-operator"
+    return run(args + ["run", "--rm", "--no-deps", service, *action],
                env=merged, capture=True)
 
 
@@ -218,6 +227,9 @@ def connection(directory, ca, role, password, database, uid, gid, state, *, new_
 
 def initialize(args):
     ca_days, server_days = validate_ttls(args.ca_days, args.server_days)
+    host_port = getattr(args, "host_port", None)
+    if host_port is not None and (type(host_port) is not int or not 1024 <= host_port <= 65535):
+        raise ValueError("Host port must be an integer 1024..65535")
     root = Path.cwd().resolve()
     for file in BASE_FILES:
         if not (root / file).is_file():
@@ -225,8 +237,8 @@ def initialize(args):
     p = private_path(args.private, exists=False)
     if p.exists() or not p.parent.is_dir():
         raise ValueError("New private destination with existing parent required")
-    if not re.fullmatch(r"starter48-[a-z0-9-]{1,40}-(src|restore)", args.project):
-        raise ValueError("Unique starter48-<run>-src|restore project required")
+    if not re.fullmatch(r"starter(?:48|49)-[a-z0-9-]{1,40}-(src|restore)", args.project):
+        raise ValueError("Unique starter48|49-<run>-src|restore project required")
     database = identifier(args.database)
     roles = {k: identifier(v) for k, v in dict(owner=args.owner, app=args.app,
              install=args.installer, backup=args.backup, restore=args.restore).items()}
@@ -251,6 +263,9 @@ def initialize(args):
                         PG_JOB_PRIVATE_DIR=str(p / "provision"),
                         PG_JOB_UID=str(operator_ids[0]), PG_JOB_GID=str(operator_ids[1]),
                         **{"PG_" + k.upper() + "_ROLE": v for k, v in roles.items()})
+    if host_port is not None:
+        state["host_port"] = host_port
+        state["env"]["PG_HOST_PORT"] = str(host_port)
     write_private(p / "state.json", json.dumps(state, indent=2))
     save(state, "initialize")
     ca_dir = p / "ca"
@@ -286,6 +301,11 @@ def initialize(args):
         password = secrets.token_hex(32)
         ids = app_ids if name == "app" else job_ids
         connection(p / name, ca, role, password, database, *ids, state)
+        if host_port is not None:
+            # Host Python has its own private files; never chown app's container mount.
+            import profiles
+            profiles.connection(p / ("host-" + name), ca, role, password, database,
+                                "postgres", host_port, hostaddr="127.0.0.1")
         connection(p / ("issue-" + name), ca, "postgres", bootstrap, "postgres",
                    *operator_ids, state, new_password=password)
     archive = p / "archives"
@@ -316,6 +336,7 @@ def main():
         init.add_argument("--" + field, required=True)
     init.add_argument("--ca-days", type=int, default=3650)
     init.add_argument("--server-days", type=int, default=365)
+    init.add_argument("--host-port", type=int, help="explicit loopback-only PostgreSQL port for Python")
     renew = sub.add_parser("renew-server-cert", help="explicit new server certificate under SAME CA")
     renew.add_argument("--state", required=True)
     renew.add_argument("--generation", required=True)
@@ -330,6 +351,8 @@ def main():
             initialize(args)
             return
         state = load(args.state)
+        if state.get("mode") == "external" and args.action not in ("identity", "stop", "install-product"):
+            raise ValueError("External target: use external.py, never initialize or restart its server")
         if args.action == "renew-server-cert":
             renew_server_cert(state, args.generation, args.server_days, args.readiness_seconds)
         elif args.action == "start-postgres":

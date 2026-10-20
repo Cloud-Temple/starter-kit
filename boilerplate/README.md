@@ -66,6 +66,10 @@ pip install --require-hashes -r requirements.lock
 python -m src.mon_service
 ```
 
+Pour un produit possédant déjà son backend PostgreSQL, voir les parcours opt-in
+[Python hôte / cible externe](ops/postgres/EXTERNAL.md). Ils conservent le même
+module public et ses contrats ; le squelette n'acquiert pas de backend SQL.
+
 ---
 
 ## Architecture

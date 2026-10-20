@@ -1,0 +1,10 @@
+# Explicit local-Python opt-in only. PG_HOST_PORT is validated by prepare.py.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${PG_HOST_PORT:?validated loopback port}:5432"
+# A bridge marked internal does not activate Docker host-port publication.
+# This explicit host opt-in also gives PG/operator ordinary NAT egress.
+networks:
+  pg-net:
+    internal: false
