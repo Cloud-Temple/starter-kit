@@ -5,6 +5,9 @@ Format : [SemVer](https://semver.org/) — `[version] — date`
 
 ## Unreleased
 
+- `certifi` 2026.10.23 et `opentelemetry-api` 1.45.2 dans `requirements.lock`
+  (correctifs PYSEC-2026-4320 et CVE-2026-114603). Aucun changement de code.
+
 - SDK serveur et types MCP 2.2.0 : correctif CVE-2026-59951 sur la rétention des
   sessions Streamable HTTP. Les limites amont actives ne sont pas un
   dimensionnement de production ; le contrat client v1 reste à conserver.
