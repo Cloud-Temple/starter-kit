@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Dépendances transitives relevées pour que `pip-audit` repasse au vert :
+  `certifi` 2026.10.23 et `opentelemetry-api` 1.45.2 dans le lock du boilerplate,
+  `certifi` 2026.10.23, `joserfc` 1.8.0 et `setuptools` 84.2.1 dans le lock de
+  la fixture S3. Locks régénérés avec `pip-compile`, aucun autre paquet changé.
+
 - Raccord standalone Python et PostgreSQL externe opt-in : port PG hôte limité
   à loopback, profils hôte/conteneur distincts, bridge externe pour app et jobs,
   préparation du seul domaine et préconditions HBA fermées sans modifier une
